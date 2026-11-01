@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/banner.png" alt="HackerTube TV" width="720"></p>
+
 # HackerTube TV
 
 **[hackertube.org](https://hackertube.org) on your Fire TV / Android TV.** HackerTube is a curated index of the YouTube videos Hacker News keeps telling people to watch. This app is a small fork of [SmartTube](https://github.com/yuliskov/SmartTube) that adds HackerTube to SmartTube's TV interface.
