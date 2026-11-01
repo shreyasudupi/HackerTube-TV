@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test for HackerTube TV on an Android TV emulator (run by CI inside android-emulator-runner).
+# Exit code: 0 = pass, 1 = fail (CI blocks the beta release on failure).
 # Usage: tests/smoke-test.sh <apk> [out-dir]
 #
 # Fails the build if:
