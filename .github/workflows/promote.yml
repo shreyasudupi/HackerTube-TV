@@ -44,7 +44,7 @@ jobs:
         run: |
           mkdir -p dist
           gh release download "${{ steps.pick.outputs.tag }}" -D dist \
-            -p 'HackerTube.apk' -p 'HackerTube_*.apk' -p 'hackertube_tv.json' -p 'SHA256SUMS.txt'
+            -p 'HackerTube.apk' -p 'HackerTube_*.apk' -p 'hackertube_tv.json' -p 'SHA256SUMS.txt' -p 'virustotal.md'
           (cd dist && sha256sum -c SHA256SUMS.txt)
           ls -la dist
 
@@ -64,9 +64,14 @@ jobs:
       - name: Publish to stable
         run: |
           TAG="${{ steps.pick.outputs.tag }}"; NAME="${TAG#v}"
+          VT=""; [ -f dist/virustotal.md ] && VT="$(cat dist/virustotal.md)"
           NOTES="HackerTube TV $NAME.
 
-          **Fire TV:** in the Downloader app, open $REPO_URL/releases/download/latest/HackerTube.apk"
+          **Fire TV:** in the Downloader app, enter code 2710893 or open $REPO_URL/releases/download/latest/HackerTube.apk
+
+          $VT
+
+          Verify an APK was built by this repo: \`gh attestation verify HackerTube.apk -R ${{ github.repository }}\`"
           if gh release view latest > /dev/null 2>&1; then
             gh release upload latest dist/* --clobber
             gh release edit latest --title "HackerTube TV $NAME" --notes "$NOTES" --prerelease=false --latest

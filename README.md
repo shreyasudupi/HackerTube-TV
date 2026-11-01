@@ -2,7 +2,7 @@
 
 # HackerTube TV
 
-**[hackertube.org](https://hackertube.org) on your Fire TV / Android TV.** HackerTube is a curated index of the YouTube videos Hacker News keeps telling people to watch. This app is a small fork of [SmartTube](https://github.com/yuliskov/SmartTube) that adds HackerTube to SmartTube's TV interface.
+**An unofficial [hackertube.org](https://hackertube.org) app for Fire TV / Android TV.** HackerTube is a curated index of the YouTube videos Hacker News keeps telling people to watch. This app is a small fork of [SmartTube](https://github.com/yuliskov/SmartTube) that adds HackerTube to SmartTube's TV interface.
 
 | Sidebar section | What's in it |
 |---|---|
@@ -90,6 +90,33 @@ cd build/SmartTube && ./gradlew assembleSthackertubeRelease
 ```
 
 Release signing uses repository secrets (`SIGNING_KEY`, `KEY_STORE_PASSWORD`, `ALIAS`, `KEY_PASSWORD`). No keys are stored in the repo.
+
+## Security
+
+**Built in public, verifiable.** Every APK is built by GitHub Actions from this repo; nothing is built or uploaded by hand.
+
+- **Build provenance:** each APK carries a signed GitHub attestation of the exact workflow run and commit that produced it. Verify with the [GitHub CLI](https://cli.github.com/):
+  ```bash
+  gh attestation verify HackerTube.apk -R shreyasudupi/HackerTube-TV
+  ```
+- **Signing certificate:** `CN=HackerTube TV`, SHA-256 fingerprint
+  `41:EF:C6:8F:22:D0:52:BB:CA:A5:A8:07:5C:27:72:5B:3B:4D:3A:13:02:BB:8A:83:D0:54:42:FC:EA:F7:99:B9`.
+  Check an APK with `keytool -printcert -jarfile HackerTube.apk` (or `apksigner verify --print-certs`). Updates only install over an app signed with this same key.
+- **Malware scan:** every release is scanned on [VirusTotal](https://www.virustotal.com); the report links are in each release's notes. Apps like SmartTube sometimes get one or two generic "riskware/PUA" flags because they update themselves and block ads; the full reports are linked so you can judge for yourself.
+- **Checksums:** `SHA256SUMS.txt` is attached to every release.
+
+**Permissions.** HackerTube TV requests exactly the same permissions as upstream SmartTube; this fork adds none.
+
+| Permission | Why |
+|---|---|
+| Internet, network state, Wi-Fi multicast | Streaming, and DIAL discovery so you can cast from your phone |
+| Record audio | Voice search with the remote's mic |
+| Install / remove packages | The built-in updater, and removing SmartTube's optional helper apps |
+| Draw over other apps | Picture-in-picture |
+| Start at boot, TV programme guide (EPG) | The app's channel on the Android TV home screen |
+| Storage | Backing up and restoring your settings |
+| Foreground service, wake lock, notifications | Keeping playback going in the background |
+| Bluetooth | Requested by a bundled library (upstream SmartTube has it too) |
 
 ## Privacy
 

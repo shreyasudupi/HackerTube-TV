@@ -20,6 +20,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write      # build provenance
+      attestations: write  # build provenance
     outputs:
       name: ${{ steps.ver.outputs.name }}
       code: ${{ steps.ver.outputs.code }}
@@ -143,6 +147,13 @@ jobs:
           fi
           ls -la dist/*
 
+      - name: Build provenance (signed record that this workflow built these APKs)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/stable/*.apk
+            dist/beta/*.apk
+
       - name: Upload build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -205,6 +216,7 @@ jobs:
     needs: [ build, smoke-test ]
     runs-on: ubuntu-latest
     env:
+      HAS_VT_KEY: ${{ secrets.VIRUS_TOTAL_API_KEY != '' }}
       GH_TOKEN: ${{ github.token }}
       NAME: ${{ needs.build.outputs.name }}
       REPO_URL: https://github.com/${{ github.repository }}
@@ -232,12 +244,56 @@ jobs:
             gh release delete "$tag" --cleanup-tag -y 2>/dev/null && echo "deleted $tag" || true
           done
 
+      - name: Upload to VirusTotal
+        if: env.HAS_VT_KEY == 'true'
+        continue-on-error: true
+        uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
+        with:
+          vt_api_key: ${{ secrets.VIRUS_TOTAL_API_KEY }}
+          files: |
+            dist/stable/HackerTube.apk
+            dist/beta/HackerTube-Beta.apk
+          request_rate: 4
+
+      - name: Collect VirusTotal results
+        if: env.HAS_VT_KEY == 'true'
+        continue-on-error: true
+        env:
+          VT_KEY: ${{ secrets.VIRUS_TOTAL_API_KEY }}
+        run: |
+          {
+            echo "### VirusTotal"
+            for f in dist/stable/HackerTube.apk dist/beta/HackerTube-Beta.apk; do
+              sha=$(sha256sum "$f" | cut -d' ' -f1)
+              stats=""
+              for i in $(seq 1 30); do   # analysis takes a few minutes
+                stats=$(curl -s -H "x-apikey: $VT_KEY" "https://www.virustotal.com/api/v3/files/$sha" | python3 -c "import json,sys;s=json.load(sys.stdin)['data']['attributes'].get('last_analysis_stats',{});t=sum(s.values());print(s.get('malicious',0),s.get('suspicious',0),t) if t>0 else exit(1)" 2>/dev/null) && break
+                sleep 15
+              done
+              if [ -n "$stats" ]; then
+                read -r mal sus tot <<< "$stats"
+                echo "- \`$(basename "$f")\`: $mal/$tot engines flagged as malicious, $sus as suspicious. [Report](https://www.virustotal.com/gui/file/$sha)"
+                [ "$mal" -ge 4 ] && echo "::warning title=VirusTotal::$(basename "$f") flagged by $mal engines" >&2
+              else
+                echo "- \`$(basename "$f")\`: scan still running. [Report](https://www.virustotal.com/gui/file/$sha)"
+              fi
+            done
+          } > dist/virustotal.md
+          cat dist/virustotal.md | tee -a "$GITHUB_STEP_SUMMARY"
+          sed -n 's/^- //p' dist/virustotal.md | while read -r l; do echo "::notice title=VirusTotal::$l"; done
+
       - name: Publish versioned pre-release
         run: |
+          VT=""; [ -f dist/virustotal.md ] && VT="$(cat dist/virustotal.md)"
           NOTES="Beta build $NAME (SmartTube $(cut -c1-7 UPSTREAM_COMMIT)). Passed the emulator smoke test.
 
-          Not yet promoted to stable. Testers: install **HackerTube Beta** from $REPO_URL/releases/download/beta/HackerTube-Beta.apk"
-          gh release create "v$NAME" dist/stable/* dist/beta/* --title "HackerTube TV $NAME (beta)" --notes "$NOTES" --prerelease --target "$GITHUB_SHA"
+          Not yet promoted to stable. Testers: install **HackerTube Beta** from $REPO_URL/releases/download/beta/HackerTube-Beta.apk
+
+          $VT
+
+          Verify an APK was built by this repo: \`gh attestation verify <file>.apk -R ${{ github.repository }}\`"
+          EXTRA=""; [ -f dist/virustotal.md ] && EXTRA="dist/virustotal.md"
+          gh release create "v$NAME" dist/stable/* dist/beta/* $EXTRA --title "HackerTube TV $NAME (beta)" --notes "$NOTES" --prerelease --target "$GITHUB_SHA"
 
       - name: Update rolling beta channel
         run: |
