@@ -56,7 +56,6 @@ if [ "$ROWS" -ge 2 ]; then
 else
   fail "HackerTube rows did not load within 90s (rows seen: $ROWS)"
 fi
-adb logcat -d -s HackerTube:* > "$OUT/hackertube-log.txt" 2>&1
 
 # 2. Play the focused (first) video
 adb shell input keyevent KEYCODE_DPAD_CENTER
@@ -92,6 +91,7 @@ else
   fail "App process is gone (killed or crashed)"
 fi
 
+adb logcat -d -s HackerTube:* -v raw > "$OUT/hackertube-log.txt" 2>&1
 adb logcat -d -b crash -v threadtime > "$OUT/crash.txt" 2>&1
 adb logcat -d -v threadtime > "$OUT/logcat.txt" 2>&1
 adb shell am force-stop "$PKG" || true

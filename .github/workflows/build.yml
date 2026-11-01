@@ -183,7 +183,15 @@ jobs:
 
       - name: Test summary
         if: always()
-        run: cat smoke/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No summary (emulator did not start)" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          if [ -f smoke/summary.md ]; then
+            cat smoke/summary.md >> "$GITHUB_STEP_SUMMARY"
+            # Also as annotations, which are readable from the API without signing in
+            grep -E "^- |Result" smoke/summary.md | sed 's/^- //' | while read -r line; do echo "::notice title=Smoke test::$line"; done
+            grep -E "^up next|related" smoke/hackertube-log.txt 2>/dev/null | head -5 | while read -r line; do echo "::notice title=Smoke log::$line"; done || true
+          else
+            echo "No summary (emulator did not start)" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload test screenshots and logs
         if: always()
