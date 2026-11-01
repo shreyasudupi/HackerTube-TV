@@ -24,6 +24,8 @@ public class HtMediaItem implements MediaItem {
     private final String mYear;
     private final String mSecondTitle;
     private final String mThumb;
+    /** "Why Hacker News recommends it" text for the description screens, or null. */
+    private final String mHnNote;
 
     private HtMediaItem(JSONObject json) {
         mVideoId = json.optString("vid", null);
@@ -49,6 +51,46 @@ public class HtMediaItem implements MediaItem {
             append(second, mYear);
         }
         mSecondTitle = second.toString();
+        mHnNote = buildHnNote(json, hn);
+    }
+
+    private static String buildHnNote(JSONObject json, JSONObject hn) {
+        String why = json.optString("why_hn", "").trim();
+        String summary = json.optString("summary", "").trim();
+        if (why.isEmpty() && summary.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        if (!why.isEmpty()) {
+            sb.append("Why Hacker News recommends it\n").append(why);
+        }
+        if (!summary.isEmpty()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(summary);
+        }
+        if (hn != null) {
+            int recommenders = hn.optInt("recommenders", 0);
+            int mentions = hn.optInt("mentions", 0);
+            String first = hn.optString("first", ""), last = hn.optString("last", "");
+            if (recommenders > 0 || mentions > 0) {
+                sb.append("\n\n");
+                if (recommenders > 0) {
+                    sb.append("Recommended by ").append(recommenders).append(recommenders == 1 ? " HN commenter" : " HN commenters");
+                } else {
+                    sb.append("Mentioned ").append(mentions).append(mentions == 1 ? " time" : " times").append(" on HN");
+                }
+                if (!first.isEmpty() && !last.isEmpty()) {
+                    sb.append(first.equals(last) ? " (" + first + ")" : " (" + first + "-" + last + ")");
+                }
+                sb.append(".");
+            }
+        }
+        sb.append("\nvia hackertube.org");
+        return sb.toString();
+    }
+
+    public String getHnNote() {
+        return mHnNote;
     }
 
     public static HtMediaItem from(JSONObject json) {

@@ -19,6 +19,7 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -60,8 +61,26 @@ public class HackerTubeService {
         }
     };
 
+    /** videoId -> "why HN recommends it" note, for the description screens. */
+    private static final Map<String, String> sHnNotes = Collections.synchronizedMap(new HashMap<String, String>());
+
     public static boolean isHackerTubeVideo(String videoId) {
         return videoId != null && sKnownIds.contains(videoId);
+    }
+
+    /** The HN note for a video, or null if it isn't a HackerTube video. */
+    public static String getHnNote(String videoId) {
+        return videoId != null ? sHnNotes.get(videoId) : null;
+    }
+
+    /** Puts the HN note above a YouTube description (either may be missing). */
+    public static String withHnNote(String videoId, String description) {
+        String note = getHnNote(videoId);
+        boolean hasDescription = description != null && !description.trim().isEmpty();
+        if (note == null) {
+            return description;
+        }
+        return hasDescription ? note + "\n\n\nFrom the YouTube description\n\n" + description : note;
     }
 
     // ---------- Observables used by the presenters ----------
@@ -241,6 +260,9 @@ public class HackerTubeService {
             if (item != null) {
                 items.add(item);
                 sKnownIds.add(item.getVideoId());
+                if (item.getHnNote() != null) {
+                    sHnNotes.put(item.getVideoId(), item.getHnNote());
+                }
             }
         }
         return items;
