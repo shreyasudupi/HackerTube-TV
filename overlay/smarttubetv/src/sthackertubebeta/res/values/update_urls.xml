@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Beta channel. App resources override the library's stable update URL. -->
+    <string-array name="update_urls">
+        <item>https://github.com/__REPO__/releases/download/beta/hackertube_tv_beta.json</item>
+    </string-array>
+</resources>

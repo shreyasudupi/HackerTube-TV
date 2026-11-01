@@ -1,0 +1,245 @@
+name: Build, test & publish beta
+
+# Every push to main (and every upstream sync) builds stable + beta APKs, runs the emulator
+# smoke test, and publishes to the BETA channel only. Stable users are untouched until someone
+# runs "Promote beta to stable".
+on:
+  push:
+    branches: [ main ]
+    paths-ignore: [ '**.md', 'docs/**' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      name: ${{ steps.ver.outputs.name }}
+      code: ${{ steps.ver.outputs.code }}
+    env:
+      REPO_URL: https://github.com/${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Check signing secrets
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          missing=""
+          for s in SIGNING_KEY KEY_STORE_PASSWORD ALIAS KEY_PASSWORD; do [ -n "${!s}" ] || missing="$missing $s"; done
+          if [ -n "$missing" ]; then
+            echo "::error title=Signing secrets missing::Add these repository secrets (Settings > Secrets and variables > Actions):$missing"
+            exit 1
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Prepare source (upstream SmartTube + HackerTube overlay)
+        run: scripts/prepare.sh "$GITHUB_WORKSPACE/build/SmartTube"
+
+      - name: Set version
+        id: ver
+        working-directory: build/SmartTube
+        run: |
+          BASE=$(grep -m1 'versionName' smarttubetv/build.gradle | awk -F'"' '{print $2}')
+          CODE=$((3000000 + ${{ github.run_number }}))
+          NAME="${BASE}-ht.${{ github.run_number }}"
+          sed -i "0,/versionCode [0-9]*/s//versionCode ${CODE}/" smarttubetv/build.gradle
+          sed -i "0,/versionName \"[^\"]*\"/s//versionName \"${NAME}\"/" smarttubetv/build.gradle
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Building HackerTube TV $NAME ($CODE)"
+
+      - name: Configure signing
+        working-directory: build/SmartTube
+        run: |
+          echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > "$RUNNER_TEMP/key.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/key.jks"
+            echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}"
+            echo "keyAlias=${{ secrets.ALIAS }}"
+            echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+          } > keystore.properties
+
+      - name: Build stable + beta
+        working-directory: build/SmartTube
+        run: |
+          chmod +x gradlew
+          set +e
+          ./gradlew --no-daemon --stacktrace assembleSthackertubeRelease assembleSthackertubebetaRelease 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+          rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then
+            ERR=$( (grep -n -E "^e: |error:|What went wrong|FAILED|Could not|> " "$RUNNER_TEMP/gradle.log" | head -40; echo '-----'; tail -60 "$RUNNER_TEMP/gradle.log") | cut -c1-300 | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=Gradle build failed::${ERR}"
+          fi
+          rm -f keystore.properties "$RUNNER_TEMP/key.jks"
+          exit $rc
+
+      - name: Collect APKs and update manifests
+        env:
+          NAME: ${{ steps.ver.outputs.name }}
+          CODE: ${{ steps.ver.outputs.code }}
+        run: |
+          set -e
+          OUTS=build/SmartTube/smarttubetv/build/outputs/apk
+          mkdir -p dist/stable dist/beta
+          S=$OUTS/sthackertube/release
+          cp "$S"/*_armeabi-v7a.apk dist/stable/HackerTube.apk
+          cp "$S"/*_arm64-v8a.apk   dist/stable/HackerTube_arm64-v8a.apk
+          cp "$S"/*_universal.apk   dist/stable/HackerTube_universal.apk
+          cp "$S"/*_x86.apk         dist/stable/HackerTube_x86-emulator.apk
+          cp "$S"/*_x86_64.apk      dist/stable/HackerTube_x86_64.apk
+          B=$OUTS/sthackertubebeta/release
+          cp "$B"/*_armeabi-v7a.apk dist/beta/HackerTube-Beta.apk
+          cp "$B"/*_arm64-v8a.apk   dist/beta/HackerTube-Beta_arm64-v8a.apk
+          cp "$B"/*_universal.apk   dist/beta/HackerTube-Beta_universal.apk
+
+          manifest() { # channel-tag prefix file
+            local DL="$REPO_URL/releases/download/$1" P="$2"
+            cat <<JSON
+          {
+            "package": {
+              "downloadUrl": "$DL/$P.apk",
+              "downloadUrlList": ["$DL/$P.apk", "$DL/${P}_universal.apk"],
+              "downloadUrlList_armeabi-v7a": ["$DL/$P.apk", "$DL/${P}_universal.apk"],
+              "downloadUrlList_arm64-v8a": ["$DL/${P}_arm64-v8a.apk", "$DL/${P}_universal.apk"],
+              "downloadUrlList_x86": ["$DL/${P}_universal.apk"],
+              "downloadUrlList_x86_64": ["$DL/${P}_universal.apk"]
+            },
+            "$NAME": {
+              "versionCode": $CODE,
+              "changelog": ["HackerTube TV $NAME (SmartTube $(cut -c1-7 UPSTREAM_COMMIT))"]
+            }
+          }
+          JSON
+          }
+          manifest latest HackerTube      > dist/stable/hackertube_tv.json
+          manifest beta   HackerTube-Beta > dist/beta/hackertube_tv_beta.json
+          python3 -m json.tool dist/stable/hackertube_tv.json > /dev/null
+          python3 -m json.tool dist/beta/hackertube_tv_beta.json > /dev/null
+          (cd dist/stable && sha256sum *.apk > SHA256SUMS.txt)
+          (cd dist/beta && sha256sum *.apk > SHA256SUMS-beta.txt)
+
+          # Privacy check: the signing certificate must not carry anything beyond the project name
+          SUBJ=$(keytool -printcert -jarfile dist/stable/HackerTube.apk | grep -m1 "Owner:")
+          echo "Signing certificate: $SUBJ"
+          if [ "$SUBJ" != "Owner: CN=HackerTube TV" ]; then
+            echo "::error title=Unexpected signing certificate::$SUBJ"; exit 1
+          fi
+          ls -la dist/*
+
+      - name: Upload build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 30
+
+  smoke-test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run smoke test on Android TV emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash tests/smoke-test.sh dist/stable/HackerTube_x86-emulator.apk smoke
+
+      - name: Test summary
+        if: always()
+        run: cat smoke/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No summary (emulator did not start)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-test
+          path: smoke/
+          retention-days: 30
+
+  publish-beta:
+    needs: [ build, smoke-test ]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NAME: ${{ needs.build.outputs.name }}
+      REPO_URL: https://github.com/${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Remove releases signed with the retired key
+        run: |
+          [ -f .github/retired-releases.txt ] || exit 0
+          grep -v '^\s*#' .github/retired-releases.txt | awk '{print $1}' | while read -r tag; do
+            [ -n "$tag" ] || continue
+            if [ "$tag" = "latest" ]; then
+              # Only the old stable (versionCode <= 3000005) was signed with the retired key; never delete a promoted build
+              gh release download latest -p hackertube_tv.json -O old.json 2>/dev/null || continue
+              CODE=$(python3 -c "import json;d=json.load(open('old.json'));print(max(v['versionCode'] for k,v in d.items() if k!='package'))")
+              [ "$CODE" -le 3000005 ] || continue
+            fi
+            gh release delete "$tag" --cleanup-tag -y 2>/dev/null && echo "deleted $tag" || true
+          done
+
+      - name: Publish versioned pre-release
+        run: |
+          NOTES="Beta build $NAME (SmartTube $(cut -c1-7 UPSTREAM_COMMIT)). Passed the emulator smoke test.
+
+          Not yet promoted to stable. Testers: install **HackerTube Beta** from $REPO_URL/releases/download/beta/HackerTube-Beta.apk"
+          gh release create "v$NAME" dist/stable/* dist/beta/* --title "HackerTube TV $NAME (beta)" --notes "$NOTES" --prerelease --target "$GITHUB_SHA"
+
+      - name: Update rolling beta channel
+        run: |
+          NOTES="Rolling beta channel. Current build: $NAME. Installs as **HackerTube Beta** next to the stable app.
+
+          Downloader URL: $REPO_URL/releases/download/beta/HackerTube-Beta.apk"
+          if gh release view beta > /dev/null 2>&1; then
+            gh release upload beta dist/beta/* --clobber
+            gh release edit beta --title "HackerTube Beta (current: $NAME)" --notes "$NOTES" --prerelease
+          else
+            gh release create beta dist/beta/* --title "HackerTube Beta (current: $NAME)" --notes "$NOTES" --prerelease --target "$GITHUB_SHA"
+          fi
+          echo "Beta $NAME published. Promote it with Actions > Promote beta to stable." >> "$GITHUB_STEP_SUMMARY"

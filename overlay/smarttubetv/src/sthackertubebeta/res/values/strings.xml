@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string translatable="false" name="app_name"><![CDATA[HackerTube Beta]]></string>
+    <string translatable="false" name="browse_title"><![CDATA[HackerTube Beta]]></string>
+    <string name="search_label">HackerTube Beta</string>
+    <string name="settings_description">HackerTube Beta Videos</string>
+    <string translatable="false" name="search_authority">org.hackertube.tv.beta</string>
+</resources>

@@ -1,0 +1,77 @@
+name: Promote beta to stable
+
+# Publishes an already-tested beta build to the stable channel (the 'latest' release that
+# installed apps and the README download link use). The APKs are copied, not rebuilt, so
+# stable users get exactly the build that passed the smoke test and your own testing.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to promote, e.g. 32.68-ht.12 (leave empty for the newest beta)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      REPO_URL: https://github.com/${{ github.repository }}
+    steps:
+      - name: Pick the build
+        id: pick
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG="v${{ inputs.version }}"
+          else
+            TAG=$(gh release list --limit 100 --json tagName,isPrerelease,createdAt \
+              --jq '[.[] | select(.isPrerelease and (.tagName | startswith("v")))] | sort_by(.createdAt) | reverse | .[0].tagName')
+          fi
+          [ -n "$TAG" ] && [ "$TAG" != "null" ] || { echo "::error::No beta build found to promote"; exit 1; }
+          gh release view "$TAG" > /dev/null || { echo "::error::Release $TAG not found"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Promoting $TAG"
+
+      - name: Download the tested stable APKs
+        run: |
+          mkdir -p dist
+          gh release download "${{ steps.pick.outputs.tag }}" -D dist \
+            -p 'HackerTube.apk' -p 'HackerTube_*.apk' -p 'hackertube_tv.json' -p 'SHA256SUMS.txt'
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          ls -la dist
+
+      - name: Refuse to go backwards
+        run: |
+          NEW=$(python3 -c "import json;d=json.load(open('dist/hackertube_tv.json'));print(max(v['versionCode'] for k,v in d.items() if k!='package'))")
+          OLD=0
+          if gh release download latest -p hackertube_tv.json -O current.json 2>/dev/null; then
+            OLD=$(python3 -c "import json;d=json.load(open('current.json'));print(max(v['versionCode'] for k,v in d.items() if k!='package'))")
+          fi
+          echo "stable now: $OLD, promoting: $NEW"
+          if [ "$NEW" -le "$OLD" ]; then
+            echo "::error::$NEW is not newer than the current stable ($OLD). Android can't install an older version over a newer one; fix forward instead."
+            exit 1
+          fi
+
+      - name: Publish to stable
+        run: |
+          TAG="${{ steps.pick.outputs.tag }}"; NAME="${TAG#v}"
+          NOTES="HackerTube TV $NAME.
+
+          **Fire TV:** in the Downloader app, open $REPO_URL/releases/download/latest/HackerTube.apk"
+          if gh release view latest > /dev/null 2>&1; then
+            gh release upload latest dist/* --clobber
+            gh release edit latest --title "HackerTube TV $NAME" --notes "$NOTES" --prerelease=false --latest
+          else
+            gh release create latest dist/* --title "HackerTube TV $NAME" --notes "$NOTES" --latest --target "$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish)"
+          fi
+          gh release edit "$TAG" --prerelease=false --latest=false --title "HackerTube TV $NAME"
+          echo "Promoted $NAME to stable. Installed apps will offer the update." >> "$GITHUB_STEP_SUMMARY"

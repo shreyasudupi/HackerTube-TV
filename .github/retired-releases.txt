@@ -1,0 +1,5 @@
+# Releases signed with the retired signing key. publish-beta deletes them if they still exist.
+v32.68-ht.3
+v32.68-ht.4
+v32.68-ht.5
+latest   (only while it still holds the old build, versionCode <= 3000005)

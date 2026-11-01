@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string translatable="false" name="ht_header_home">HackerTube</string>
+    <string translatable="false" name="ht_header_categories">HN Topics</string>
+    <string translatable="false" name="ht_header_playlists">HN Playlists</string>
+</resources>

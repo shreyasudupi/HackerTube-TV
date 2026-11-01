@@ -1,0 +1,5 @@
+# Keep the upstream CRLF line endings inside the patch byte-for-byte
+*.patch -text
+overlay/** -text
+*.jks binary
+*.png binary

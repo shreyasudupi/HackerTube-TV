@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- In-app updates come from this fork's GitHub releases. __REPO__ is filled in by scripts/prepare.sh -->
+    <string-array name="update_urls">
+        <item>https://github.com/__REPO__/releases/download/latest/hackertube_tv.json</item>
+    </string-array>
+</resources>

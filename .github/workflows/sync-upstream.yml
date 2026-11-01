@@ -1,0 +1,44 @@
+name: Sync with upstream SmartTube
+
+# SmartTube ships frequent fixes when YouTube changes things. This checks weekly for a new
+# upstream commit, verifies the HackerTube patch still applies, bumps UPSTREAM_COMMIT and
+# kicks off a new build. If the patch no longer applies the run fails and nothing changes.
+on:
+  schedule:
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Check upstream
+        id: up
+        run: |
+          LATEST=$(git ls-remote https://github.com/yuliskov/SmartTube.git refs/heads/master | cut -f1)
+          CURRENT=$(tr -d '[:space:]' < UPSTREAM_COMMIT)
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST" = "$CURRENT" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; echo "Up to date ($CURRENT)"; else echo "changed=true" >> "$GITHUB_OUTPUT"; echo "$CURRENT -> $LATEST"; fi
+
+      - name: Verify patch applies to new upstream
+        if: steps.up.outputs.changed == 'true'
+        run: |
+          echo "${{ steps.up.outputs.latest }}" > UPSTREAM_COMMIT
+          scripts/prepare.sh "$RUNNER_TEMP/SmartTube"
+
+      - name: Commit and build
+        if: steps.up.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "Night Shift"
+          git config user.email "night-shift@hackertube-tv.invalid"
+          git commit -am "Sync SmartTube to ${{ steps.up.outputs.latest }}"
+          git push
+          gh workflow run build.yml --ref main

@@ -1,0 +1,5 @@
+<resources>
+    <string name="search_label">HackerTube</string>
+    <string name="settings_description">HackerTube Videos</string>
+    <string translatable="false" name="search_authority">org.hackertube.tv</string>
+</resources>

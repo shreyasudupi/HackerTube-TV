@@ -1,0 +1,778 @@
+diff --git a/common/build.gradle b/common/build.gradle
+index 35466e8..9df17b1 100644
+--- a/common/build.gradle
++++ b/common/build.gradle
+@@ -48,6 +48,7 @@ android {
+         stbeta {}
+         ststable {}
+         stfdroid {}
++        sthackertube { matchingFallbacks = ['ststable'] } // HackerTube TV fork
+     }
+ }
+ 
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java
+index 8627fae..7b0adfc 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java
+@@ -26,6 +26,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.SeekBarSegme
+ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
+ import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
+ import com.liskovsoft.smartyoutubetv2.common.app.presenters.PlaybackPresenter;
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HackerTubeService;
+ import com.liskovsoft.smartyoutubetv2.common.misc.BrowseProcessorManager;
+ import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
+ import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
+@@ -44,6 +45,9 @@ public class SuggestionsController extends BasePlayerController {
+     private ContentService mContentService;
+     private BrowseProcessorManager mBrowseProcessor;
+     private Video mNextSectionVideo;
++    // HackerTube: related videos for the current HackerTube video and the one autoplay should pick
++    private VideoGroup mHtUpNext;
++    private Video mHtNextVideo;
+     private int mFocusCount;
+     private int mNextRetryCount;
+     private List<ChapterItem> mChapters;
+@@ -186,7 +190,7 @@ public class SuggestionsController extends BasePlayerController {
+ 
+         MediaGroup mediaGroup = group.getMediaGroup();
+ 
+-        Disposable continueAction = mContentService.continueGroupObserve(mediaGroup)
++        Disposable continueAction = HackerTubeService.continueAny(mContentService, mediaGroup)
+                 .subscribe(
+                         continueMediaGroup -> {
+                             getPlayer().showProgressBar(false);
+@@ -238,9 +242,50 @@ public class SuggestionsController extends BasePlayerController {
+         }
+ 
+         clearSuggestionsIfNeeded(video);
++
++        mHtUpNext = null;
++        mHtNextVideo = null;
++
++        // HackerTube video: fetch hackertube.org's related videos first so they become the top row and drive autoplay
++        if (video != null && HackerTubeService.isHackerTubeVideo(video.videoId)) {
++            Disposable relatedAction = HackerTubeService.getRelatedObserve(video.videoId)
++                    .subscribe(
++                            group -> {
++                                mHtUpNext = VideoGroup.from(group);
++                                loadMetadata(video, metadata -> updateSuggestions(metadata, video));
++                            },
++                            error -> loadMetadata(video, metadata -> updateSuggestions(metadata, video))
++                    );
++            mActions.add(relatedAction);
++            return;
++        }
++
+         loadMetadata(video, metadata -> updateSuggestions(metadata, video));
+     }
+ 
++    private void appendHackerTubeUpNextIfNeeded(Video video) {
++        if (getPlayer() == null || mHtUpNext == null || mHtUpNext.isEmpty()) {
++            return;
++        }
++
++        getPlayer().updateSuggestions(mHtUpNext);
++        mBrowseProcessor.process(mHtUpNext);
++
++        // Autoplay: first related video that isn't this one and hasn't been watched yet
++        mHtNextVideo = null;
++        for (Video candidate : mHtUpNext.getVideos()) {
++            if (candidate != null && candidate.hasVideo() && !Helpers.equals(candidate.videoId, video.videoId)
++                    && !HackerTubeService.isWatched(getContext(), candidate.videoId)) {
++                mHtNextVideo = candidate;
++                break;
++            }
++        }
++
++        if (mHtNextVideo != null && mNextSectionVideo == null) {
++            getPlayer().setNextTitle(mHtNextVideo);
++        }
++    }
++
+     private void loadMetadata(Video video, OnMetadata callback) {
+         disposeActions();
+ 
+@@ -289,6 +334,8 @@ public class SuggestionsController extends BasePlayerController {
+             result = Video.from(getVideo().nextMediaItem);
+         } else if (mNextSectionVideo != null && !getVideo().isShuffled) {
+             result = mNextSectionVideo;
++        } else if (mHtNextVideo != null && !getVideo().isShuffled) {
++            result = mHtNextVideo; // HackerTube: stay inside the HN-recommended set
+         } else if (getVideo().nextMediaItem != null) {
+             result = Video.from(getVideo().nextMediaItem);
+         }
+@@ -378,6 +425,8 @@ public class SuggestionsController extends BasePlayerController {
+ 
+         appendSectionPlaylistIfNeeded(video);
+ 
++        appendHackerTubeUpNextIfNeeded(video);
++
+         List<MediaGroup> suggestions = mediaItemMetadata.getSuggestions();
+ 
+         if (suggestions == null) {
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
+index 8d81a5a..d2e933e 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
+@@ -36,6 +36,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.menu.provide
+ import com.liskovsoft.smartyoutubetv2.common.app.presenters.interfaces.SectionPresenter;
+ import com.liskovsoft.smartyoutubetv2.common.app.presenters.interfaces.VideoGroupPresenter;
+ import com.liskovsoft.smartyoutubetv2.common.app.views.BrowseView;
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HackerTubeService;
+ import com.liskovsoft.smartyoutubetv2.common.misc.AppDataSourceManager;
+ import com.liskovsoft.smartyoutubetv2.common.misc.BrowseProcessorManager;
+ import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
+@@ -186,6 +187,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+         String country = LocaleUtility.getCurrentLocale(getContext()).getCountry();
+         int uploadsType = getMainUIData().isUploadsOldLookEnabled() ? BrowseSection.TYPE_GRID : BrowseSection.TYPE_MULTI_GRID;
+ 
++        // HackerTube sections (hackertube.org)
++        mSectionsMapping.put(HackerTubeService.SECTION_HOME, new BrowseSection(HackerTubeService.SECTION_HOME, getContext().getString(R.string.ht_header_home), BrowseSection.TYPE_ROW, R.drawable.icon_trending, false));
++        mSectionsMapping.put(HackerTubeService.SECTION_CATEGORIES, new BrowseSection(HackerTubeService.SECTION_CATEGORIES, getContext().getString(R.string.ht_header_categories), BrowseSection.TYPE_ROW, R.drawable.icon_news, false));
++        mSectionsMapping.put(HackerTubeService.SECTION_PLAYLISTS, new BrowseSection(HackerTubeService.SECTION_PLAYLISTS, getContext().getString(R.string.ht_header_playlists), BrowseSection.TYPE_ROW, R.drawable.icon_playlist, false));
++
+         mSectionsMapping.put(MediaGroup.TYPE_HOME, new BrowseSection(MediaGroup.TYPE_HOME, getContext().getString(R.string.header_home), BrowseSection.TYPE_ROW, R.drawable.icon_home, false));
+         mSectionsMapping.put(MediaGroup.TYPE_SHORTS, new BrowseSection(MediaGroup.TYPE_SHORTS, getContext().getString(R.string.header_shorts), BrowseSection.TYPE_SHORTS_GRID, R.drawable.icon_shorts));
+         mSectionsMapping.put(MediaGroup.TYPE_TRENDING, new BrowseSection(MediaGroup.TYPE_TRENDING, getContext().getString(R.string.header_trending), BrowseSection.TYPE_ROW, R.drawable.icon_trending));
+@@ -213,6 +219,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+     }
+ 
+     private void initRowAndGridMapping() {
++        mRowMapping.put(HackerTubeService.SECTION_HOME, HackerTubeService.getHomeObserve(getContext()));
++        mRowMapping.put(HackerTubeService.SECTION_CATEGORIES, HackerTubeService.getCategoriesObserve());
++        mRowMapping.put(HackerTubeService.SECTION_PLAYLISTS, HackerTubeService.getPlaylistsObserve());
+         mRowMapping.put(MediaGroup.TYPE_HOME, getContentService().getHomeObserve());
+         mRowMapping.put(MediaGroup.TYPE_TRENDING, getContentService().getTrendingObserve());
+         mRowMapping.put(MediaGroup.TYPE_KIDS_HOME, getContentService().getKidsHomeObserve());
+@@ -307,7 +316,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+ 
+         // Empty Home on first run fix. Switch to something non-empty.
+         if (!getSignInService().isSigned() && VideoStateService.instance(getContext()).isEmpty()) {
+-            bootSectionId = MediaGroup.TYPE_MUSIC;
++            bootSectionId = HackerTubeService.SECTION_HOME;
+         }
+ 
+         int index = 0;
+@@ -851,7 +860,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+         //    continuation = getContentService().continueGroupObserve(mediaGroup);
+         //}
+ 
+-        continuation = getContentService().continueGroupObserve(mediaGroup);
++        continuation = HackerTubeService.continueAny(getContentService(), mediaGroup);
+ 
+         Disposable continueAction = continuation
+                 .subscribe(
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/SearchPresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/SearchPresenter.java
+index 7346123..f94a148 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/SearchPresenter.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/SearchPresenter.java
+@@ -3,6 +3,7 @@ package com.liskovsoft.smartyoutubetv2.common.app.presenters;
+ import android.annotation.SuppressLint;
+ import android.content.Context;
+ import com.liskovsoft.mediaserviceinterfaces.ContentService;
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HackerTubeService;
+ import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
+ import com.liskovsoft.mediaserviceinterfaces.data.SearchOptions;
+ import com.liskovsoft.sharedutils.mylogger.Log;
+@@ -178,8 +179,9 @@ public class SearchPresenter extends BasePresenter<SearchView> implements VideoG
+ 
+         getView().clearSearch();
+ 
+-        mLoadAction = contentService.getSearchObserve(searchText,
+-                mUploadDateOptions | mDurationOptions | mTypeOptions | mFeatureOptions | mSortingOptions)
++        // HackerTube results first (one row), then the regular YouTube results
++        mLoadAction = HackerTubeService.getSearchObserve(searchText).concatWith(contentService.getSearchObserve(searchText,
++                mUploadDateOptions | mDurationOptions | mTypeOptions | mFeatureOptions | mSortingOptions))
+                 .subscribe(
+                         mediaGroups -> {
+                             Log.d(TAG, "Receiving results for '%s'", searchText);
+@@ -221,7 +223,7 @@ public class SearchPresenter extends BasePresenter<SearchView> implements VideoG
+ 
+         ContentService contentService = getContentService();
+ 
+-        mScrollAction = contentService.continueGroupObserve(mediaGroup)
++        mScrollAction = HackerTubeService.continueAny(contentService, mediaGroup)
+                 .subscribe(
+                         continueMediaGroup -> {
+                             VideoGroup newGroup = VideoGroup.from(group, continueMediaGroup);
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java
+index b726436..c2b8a86 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java
+@@ -6,6 +6,7 @@ import android.content.Context;
+ import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
+ import com.liskovsoft.sharedutils.helpers.Helpers;
+ import com.liskovsoft.smartyoutubetv2.common.R;
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HackerTubeService;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+ import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
+ import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs.ProfileChangeListener;
+@@ -236,6 +237,9 @@ public class SidebarService implements ProfileChangeListener {
+     }
+ 
+     private void initSections() {
++        mDefaultSections.put(R.string.ht_header_home, HackerTubeService.SECTION_HOME);
++        mDefaultSections.put(R.string.ht_header_categories, HackerTubeService.SECTION_CATEGORIES);
++        mDefaultSections.put(R.string.ht_header_playlists, HackerTubeService.SECTION_PLAYLISTS);
+         mDefaultSections.put(R.string.header_notifications, MediaGroup.TYPE_NOTIFICATIONS);
+         mDefaultSections.put(R.string.header_home, MediaGroup.TYPE_HOME);
+         mDefaultSections.put(R.string.header_shorts, MediaGroup.TYPE_SHORTS);
+@@ -293,7 +297,7 @@ public class SidebarService implements ProfileChangeListener {
+         String[] split = Helpers.splitData(data);
+ 
+         mPinnedItems = Helpers.parseList(split, 0, Video::fromString);
+-        mBootSectionId = Helpers.parseInt(split, 1, MediaGroup.TYPE_HOME);
++        mBootSectionId = Helpers.parseInt(split, 1, HackerTubeService.SECTION_HOME);
+         mIsSettingsSectionEnabled = Helpers.parseBoolean(split, 2, true);
+ 
+         transferOldPinnedItems();
+diff --git a/leanbackassistant/build.gradle b/leanbackassistant/build.gradle
+index dcd39bf..a1a219f 100644
+--- a/leanbackassistant/build.gradle
++++ b/leanbackassistant/build.gradle
+@@ -38,6 +38,7 @@ android {
+         stbeta {}
+         ststable {}
+         stfdroid {}
++        sthackertube { matchingFallbacks = ['ststable'] } // HackerTube TV fork
+     }
+ }
+ 
+diff --git a/smarttubetv/build.gradle b/smarttubetv/build.gradle
+index 3664bfd..a796d7b 100644
+--- a/smarttubetv/build.gradle
++++ b/smarttubetv/build.gradle
+@@ -1,257 +1,276 @@
+-apply from: gradle.ext.sharedModulesConstants
+-
+-buildscript {
+-    repositories {
+-        google()
+-        mavenCentral()
+-        jcenter()
+-    }
+-
+-    dependencies {
+-        // These docs use an open ended version so that our plugin
+-        // can be updated quickly in response to Android tooling updates
+-
+-        // Check that you have the Google Services Gradle plugin v4.3.2 or later
+-        // (if not, add it).
+-        classpath 'com.google.gms:google-services:4.3.15'
+-
+-        // Add the Crashlytics Gradle plugin.
+-        // https://firebase.google.com/docs/crashlytics/get-started?platform=android
+-        // https://firebase.google.com/docs/android/setup
+-        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.7.1'
+-    }
+-}
+-
+-apply plugin: 'com.android.application'
+-
+-def keystorePropertiesFile = rootProject.file("keystore.properties")
+-def keystoreProperties = new Properties()
+-if (keystorePropertiesFile.exists()) {
+-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+-}
+-
+-// The first letter of the flavor name must be in uppercase
+-if (new File("${projectDir}/google-services.json").exists() && (getGradle().getStartParameter().getTaskRequests().toString().contains("Stbeta") ||
+-        getGradle().getStartParameter().getTaskRequests().toString().contains("Ststable"))) {
+-    // Google Services Gradle plugin (transforms google-services.json file)
+-    apply plugin: 'com.google.gms.google-services'
+-
+-    // Apply the Crashlytics Gradle plugin
+-    apply plugin: 'com.google.firebase.crashlytics'
+-}
+-
+-android {
+-    // FIX: Default interface methods are only supported starting with Android N (--min-api 24)
+-    compileOptions {
+-        sourceCompatibility JavaVersion.VERSION_1_8
+-        targetCompatibility JavaVersion.VERSION_1_8
+-    }
+-
+-    compileSdkVersion project.properties.compileSdkVersion
+-    buildToolsVersion project.properties.buildToolsVersion
+-    testOptions.unitTests.includeAndroidResources = true
+-    ndkVersion "21.0.6113669" // reduce size of the *.so files (stripping debug symbols)
+-    
+-    defaultConfig {
+-        // values linked with applicationId: searchable.searchSuggestAuthority, searchable.searchSuggestIntentData, VideoContract.CONTENT_AUTHORITY
+-        applicationId "app.smarttube"
+-        minSdkVersion project.properties.minSdkVersion
+-        targetSdkVersion project.properties.targetSdkVersion
+-        versionCode 2458
+-        versionName "32.68"
+-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+-        buildConfigField "long", "TIMESTAMP", System.currentTimeMillis() + "L"
+-
+-        // More info: http://myhexaville.com/2017/03/10/android-multidex/
+-        // Additionally, you should extend your application from MultiDexApplication
+-        multiDexEnabled = true
+-
+-        // Trying to fix VerifyError/ClassNotFoundException
+-        multiDexKeepProguard file("multidex-keep.pro")
+-
+-        // The content of Universal apk
+-        ndk {
+-            abiFilters 'armeabi-v7a', 'arm64-v8a'
+-        }
+-    }
+-
+-    // https://stackoverflow.com/questions/37382057/android-apk-how-to-exclude-a-so-file-from-a-3rd-party-dependency-using-gradle
+-    // armeabi-v7a backward compatible with arm64-v8a, x86 -> x86_64 etc
+-    splits {
+-        abi {
+-            enable true
+-            reset()
+-            // Note, Android could soon start warning users when they run 32-bit apps
+-            //include 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a' //select ABIs to build APKs for
+-            include 'armeabi-v7a', 'arm64-v8a', 'x86' // v7a main build, x86 for WSL, v8a for Pixel Tablet (no 32 bit support)
+-            universalApk true //generate an additional APK that contains all the ABIs
+-        }
+-    }
+-
+-    signingConfigs {
+-        release {
+-            if (keystorePropertiesFile.exists()) {
+-                storeFile = file(keystoreProperties['storeFile'])
+-                storePassword = keystoreProperties['storePassword']
+-                keyAlias = keystoreProperties['keyAlias']
+-                keyPassword = keystoreProperties['keyPassword']
+-            }
+-        }
+-    }
+-    
+-    buildTypes {
+-        release {
+-            // Enable minification
+-            // shrinkResources true
+-            // minifyEnabled true
+-
+-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+-
+-            if (keystorePropertiesFile.exists()) {
+-                signingConfig signingConfigs.release
+-            }
+-        }
+-        // Use same key for release and debug for testing
+-        debug {
+-            if (keystorePropertiesFile.exists()) {
+-                signingConfig signingConfigs.release
+-            }
+-        }
+-    }
+-
+-    // naming example: SmartYouTubeTV_Xwalk_v6.8.12_r.apk
+-    // https://stackoverflow.com/questions/18332474/how-to-set-versionname-in-apk-filename-using-gradle
+-    applicationVariants.all { variant ->
+-        variant.outputs.all { output ->
+-            def project = "SmartTube"
+-            def flavor = variant.productFlavors[-1].name.substring(2) // remove st prefix
+-            def buildType = variant.buildType.name.take(1)
+-            def version = variant.versionName
+-            def arch = output.getFilter(com.android.build.OutputFile.ABI)
+-            arch = arch != null ? arch : "universal"
+-
+-            def newApkName = sprintf("%s_%s_%s_%s.apk", [project, flavor, version, arch])
+-
+-            // gradle 4.6 migration
+-            output.outputFileName = new File(newApkName)
+-        }
+-    }
+-
+-    packagingOptions {
+-        // openvpn module fix: More than one file was found with OS independent path 'META-INF/com.android.tools/proguard/coroutines.pro'
+-        //exclude 'META-INF/com.android.tools/proguard/coroutines.pro'
+-        // Not working!
+-        // exclude '**/SearchOrbView.class'
+-
+-        // Remove unneeded arches from universal apk here because 'splits' cannot do this
+-        // exclude "lib/x86_64/**"
+-        // exclude "lib/armeabi/**"
+-    }
+-
+-    lintOptions {
+-        abortOnError true
+-        //checkReleaseBuilds false // fix for ClassNotFoundException: com.android.tools.lint.client.api.Vendor
+-    }
+-
+-    // gradle 4.6 migration: disable dimensions mechanism
+-    // more: https://proandroiddev.com/advanced-android-flavors-part-4-a-new-version-fc2ad80c01bb
+-    flavorDimensions "default"
+-
+-    // NOTE: The main goal of prefixing a flavor is to group flavors' folders together
+-    productFlavors {
+-        stbeta {
+-            applicationId "org.smarttube.beta"
+-            targetSdkVersion project.properties.compileSdkVersion
+-        }
+-        ststable {
+-            applicationId "org.smarttube.stable"
+-            targetSdkVersion project.properties.compileSdkVersion
+-        }
+-        stfdroid {
+-            applicationId "app.smarttube.fdroid"
+-            minSdkVersion 21
+-            targetSdkVersion project.properties.compileSdkVersion
+-
+-            // The content of Universal apk
+-            ndk {
+-                abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86'
+-            }
+-        }
+-    }
+-}
+-
+-dependencies {
+-    implementation fileTree(include: ['*.jar'], dir: 'libs')
+-
+-    implementation 'androidx.leanback:leanback:' + leanbackXVersion
+-    implementation 'androidx.leanback:leanback-preference:' + leanbackXVersion
+-    implementation 'androidx.recommendation:recommendation:' + leanbackXVersion
+-    implementation 'androidx.annotation:annotation:' + annotationXVersion
+-    implementation 'androidx.recyclerview:recyclerview:' + recyclerviewXVersion // exoplayer 2.12.1 fix
+-    implementation 'androidx.media:media:' + mediaXVersion // exoplayer fix
+-    implementation 'androidx.constraintlayout:constraintlayout:' + constraintLayoutXVersion
+-
+-    implementation 'com.github.bumptech.glide:glide:' + glideVersion
+-    implementation 'com.github.bumptech.glide:annotations:' + glideVersion
+-    annotationProcessor 'com.github.bumptech.glide:compiler:' + glideVersion
+-    implementation 'com.github.zjupure:webpdecoder:' + webpDecoderVersion
+-    implementation 'androidx.multidex:multidex:' + multiDexVersion
+-
+-    //////// BEGIN EXOPLAYER /////////
+-
+-    implementation project(':exoplayer-library-core')
+-    implementation project(':exoplayer-library-ui')
+-    implementation project(':exoplayer-extension-leanback')
+-    implementation project(':exoplayer-extension-mediasession')
+-
+-    // implementation 'com.amazon.android:exoplayer:' + amazonExoplayerVersion
+-    // implementation 'com.amazon.android:extension-leanback:' + amazonExoplayerVersion
+-    // implementation 'com.amazon.android:extension-mediasession:' + amazonExoplayerVersion
+-
+-    // implementation 'com.google.android.exoplayer:exoplayer:' + exoplayerVersion
+-    // implementation 'com.google.android.exoplayer:extension-leanback:' + exoplayerVersion
+-    // implementation 'com.google.android.exoplayer:extension-mediasession:' + exoplayerVersion
+-
+-    // implementation 'com.github.amzn:exoplayer-amazon-port:' + amazonExoplayerJitpackVersion
+-
+-    //////// END EXOPLAYER //////////
+-
+-    testImplementation 'junit:junit:' + junitVersion
+-    testImplementation 'org.robolectric:robolectric:' + robolectricVersion
+-    androidTestImplementation 'androidx.test.ext:junit:' + testXSupportVersion
+-    androidTestImplementation 'androidx.test.ext:truth:' + testXSupportVersion
+-    androidTestImplementation 'androidx.test:runner:' + testXSupportVersion
+-    androidTestImplementation 'androidx.test:rules:' + testXSupportVersion
+-    androidTestImplementation 'androidx.test.espresso:espresso-core:' + espressoVersion
+-
+-    implementation project(':fragment-1.1.0')
+-    implementation project(':leanback-1.0.0')
+-    implementation project(':common')
+-    implementation project(':sharedutils')
+-    implementation project(':mediaserviceinterfaces')
+-    implementation project(':youtubeapi')
+-    implementation project(':chatkit')
+-    implementation project(':doubletapplayerview')
+-
+-    implementation 'io.reactivex.rxjava2:rxandroid:' + rxAndroidVersion
+-    implementation 'io.reactivex.rxjava2:rxjava:' + rxJavaVersion
+-
+-    // Add the Firebase Crashlytics SDK.
+-
+-    stbetaImplementation('com.google.firebase:firebase-crashlytics:' + firebaseCrashlyticsVersion) {
+-        transitive = true
+-    }
+-
+-    ststableImplementation('com.google.firebase:firebase-crashlytics:' + firebaseCrashlyticsVersion) {
+-        transitive = true
+-    }
+-
+-    // debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.14'
+-
+-    implementation 'net.gotev:speech:' + gotevSpeechVersion
+-
+-    // ByeByeDPI fix
+-    implementation 'org.conscrypt:conscrypt-android:' + conscryptVersion
+-
+-    implementation 'androidx.work:work-runtime:' + workVersion
+-}
++apply from: gradle.ext.sharedModulesConstants
++
++buildscript {
++    repositories {
++        google()
++        mavenCentral()
++        jcenter()
++    }
++
++    dependencies {
++        // These docs use an open ended version so that our plugin
++        // can be updated quickly in response to Android tooling updates
++
++        // Check that you have the Google Services Gradle plugin v4.3.2 or later
++        // (if not, add it).
++        classpath 'com.google.gms:google-services:4.3.15'
++
++        // Add the Crashlytics Gradle plugin.
++        // https://firebase.google.com/docs/crashlytics/get-started?platform=android
++        // https://firebase.google.com/docs/android/setup
++        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.7.1'
++    }
++}
++
++apply plugin: 'com.android.application'
++
++def keystorePropertiesFile = rootProject.file("keystore.properties")
++def keystoreProperties = new Properties()
++if (keystorePropertiesFile.exists()) {
++    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
++}
++
++// The first letter of the flavor name must be in uppercase
++if (new File("${projectDir}/google-services.json").exists() && (getGradle().getStartParameter().getTaskRequests().toString().contains("Stbeta") ||
++        getGradle().getStartParameter().getTaskRequests().toString().contains("Ststable"))) {
++    // Google Services Gradle plugin (transforms google-services.json file)
++    apply plugin: 'com.google.gms.google-services'
++
++    // Apply the Crashlytics Gradle plugin
++    apply plugin: 'com.google.firebase.crashlytics'
++}
++
++android {
++    // FIX: Default interface methods are only supported starting with Android N (--min-api 24)
++    compileOptions {
++        sourceCompatibility JavaVersion.VERSION_1_8
++        targetCompatibility JavaVersion.VERSION_1_8
++    }
++
++    compileSdkVersion project.properties.compileSdkVersion
++    buildToolsVersion project.properties.buildToolsVersion
++    testOptions.unitTests.includeAndroidResources = true
++    ndkVersion "21.0.6113669" // reduce size of the *.so files (stripping debug symbols)
++    
++    defaultConfig {
++        // values linked with applicationId: searchable.searchSuggestAuthority, searchable.searchSuggestIntentData, VideoContract.CONTENT_AUTHORITY
++        applicationId "app.smarttube"
++        minSdkVersion project.properties.minSdkVersion
++        targetSdkVersion project.properties.targetSdkVersion
++        versionCode 2458
++        versionName "32.68"
++        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
++        buildConfigField "long", "TIMESTAMP", System.currentTimeMillis() + "L"
++
++        // More info: http://myhexaville.com/2017/03/10/android-multidex/
++        // Additionally, you should extend your application from MultiDexApplication
++        multiDexEnabled = true
++
++        // Trying to fix VerifyError/ClassNotFoundException
++        multiDexKeepProguard file("multidex-keep.pro")
++
++        // The content of Universal apk
++        ndk {
++            abiFilters 'armeabi-v7a', 'arm64-v8a'
++        }
++    }
++
++    // https://stackoverflow.com/questions/37382057/android-apk-how-to-exclude-a-so-file-from-a-3rd-party-dependency-using-gradle
++    // armeabi-v7a backward compatible with arm64-v8a, x86 -> x86_64 etc
++    splits {
++        abi {
++            enable true
++            reset()
++            // Note, Android could soon start warning users when they run 32-bit apps
++            //include 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a' //select ABIs to build APKs for
++            include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64' // v7a main build, x86 for WSL, v8a for Pixel Tablet (no 32 bit support)
++            universalApk true //generate an additional APK that contains all the ABIs
++        }
++    }
++
++    signingConfigs {
++        release {
++            if (keystorePropertiesFile.exists()) {
++                storeFile = file(keystoreProperties['storeFile'])
++                storePassword = keystoreProperties['storePassword']
++                keyAlias = keystoreProperties['keyAlias']
++                keyPassword = keystoreProperties['keyPassword']
++            }
++        }
++    }
++    
++    buildTypes {
++        release {
++            // Enable minification
++            // shrinkResources true
++            // minifyEnabled true
++
++            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
++
++            if (keystorePropertiesFile.exists()) {
++                signingConfig signingConfigs.release
++            }
++        }
++        // Use same key for release and debug for testing
++        debug {
++            if (keystorePropertiesFile.exists()) {
++                signingConfig signingConfigs.release
++            }
++        }
++    }
++
++    // naming example: SmartYouTubeTV_Xwalk_v6.8.12_r.apk
++    // https://stackoverflow.com/questions/18332474/how-to-set-versionname-in-apk-filename-using-gradle
++    applicationVariants.all { variant ->
++        variant.outputs.all { output ->
++            def project = variant.flavorName.startsWith("sthackertube") ? "HackerTubeTV" : "SmartTube"
++            def flavor = variant.productFlavors[-1].name.substring(2) // remove st prefix
++            def buildType = variant.buildType.name.take(1)
++            def version = variant.versionName
++            def arch = output.getFilter(com.android.build.OutputFile.ABI)
++            arch = arch != null ? arch : "universal"
++
++            def newApkName = sprintf("%s_%s_%s_%s.apk", [project, flavor, version, arch])
++
++            // gradle 4.6 migration
++            output.outputFileName = new File(newApkName)
++        }
++    }
++
++    packagingOptions {
++        // openvpn module fix: More than one file was found with OS independent path 'META-INF/com.android.tools/proguard/coroutines.pro'
++        //exclude 'META-INF/com.android.tools/proguard/coroutines.pro'
++        // Not working!
++        // exclude '**/SearchOrbView.class'
++
++        // Remove unneeded arches from universal apk here because 'splits' cannot do this
++        // exclude "lib/x86_64/**"
++        // exclude "lib/armeabi/**"
++    }
++
++    lintOptions {
++        abortOnError true
++        //checkReleaseBuilds false // fix for ClassNotFoundException: com.android.tools.lint.client.api.Vendor
++    }
++
++    // gradle 4.6 migration: disable dimensions mechanism
++    // more: https://proandroiddev.com/advanced-android-flavors-part-4-a-new-version-fc2ad80c01bb
++    flavorDimensions "default"
++
++    // NOTE: The main goal of prefixing a flavor is to group flavors' folders together
++    productFlavors {
++        stbeta {
++            applicationId "org.smarttube.beta"
++            targetSdkVersion project.properties.compileSdkVersion
++        }
++        ststable {
++            applicationId "org.smarttube.stable"
++            targetSdkVersion project.properties.compileSdkVersion
++        }
++        // HackerTube TV: SmartTube + hackertube.org sections. Own package, installs next to SmartTube.
++        sthackertube {
++            applicationId "org.hackertube.tv"
++            targetSdkVersion project.properties.compileSdkVersion
++            matchingFallbacks = ['ststable']
++            // Also ship Intel builds so the app runs on the Android TV emulator (TV system images are x86)
++            ndk {
++                abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
++            }
++        }
++        // HackerTube Beta: same code, separate package and update channel, installs next to the stable app.
++        sthackertubebeta {
++            applicationId "org.hackertube.tv.beta"
++            targetSdkVersion project.properties.compileSdkVersion
++            matchingFallbacks = ['sthackertube', 'ststable']
++            ndk {
++                abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
++            }
++        }
++        stfdroid {
++            applicationId "app.smarttube.fdroid"
++            minSdkVersion 21
++            targetSdkVersion project.properties.compileSdkVersion
++
++            // The content of Universal apk
++            ndk {
++                abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86'
++            }
++        }
++    }
++}
++
++dependencies {
++    implementation fileTree(include: ['*.jar'], dir: 'libs')
++
++    implementation 'androidx.leanback:leanback:' + leanbackXVersion
++    implementation 'androidx.leanback:leanback-preference:' + leanbackXVersion
++    implementation 'androidx.recommendation:recommendation:' + leanbackXVersion
++    implementation 'androidx.annotation:annotation:' + annotationXVersion
++    implementation 'androidx.recyclerview:recyclerview:' + recyclerviewXVersion // exoplayer 2.12.1 fix
++    implementation 'androidx.media:media:' + mediaXVersion // exoplayer fix
++    implementation 'androidx.constraintlayout:constraintlayout:' + constraintLayoutXVersion
++
++    implementation 'com.github.bumptech.glide:glide:' + glideVersion
++    implementation 'com.github.bumptech.glide:annotations:' + glideVersion
++    annotationProcessor 'com.github.bumptech.glide:compiler:' + glideVersion
++    implementation 'com.github.zjupure:webpdecoder:' + webpDecoderVersion
++    implementation 'androidx.multidex:multidex:' + multiDexVersion
++
++    //////// BEGIN EXOPLAYER /////////
++
++    implementation project(':exoplayer-library-core')
++    implementation project(':exoplayer-library-ui')
++    implementation project(':exoplayer-extension-leanback')
++    implementation project(':exoplayer-extension-mediasession')
++
++    // implementation 'com.amazon.android:exoplayer:' + amazonExoplayerVersion
++    // implementation 'com.amazon.android:extension-leanback:' + amazonExoplayerVersion
++    // implementation 'com.amazon.android:extension-mediasession:' + amazonExoplayerVersion
++
++    // implementation 'com.google.android.exoplayer:exoplayer:' + exoplayerVersion
++    // implementation 'com.google.android.exoplayer:extension-leanback:' + exoplayerVersion
++    // implementation 'com.google.android.exoplayer:extension-mediasession:' + exoplayerVersion
++
++    // implementation 'com.github.amzn:exoplayer-amazon-port:' + amazonExoplayerJitpackVersion
++
++    //////// END EXOPLAYER //////////
++
++    testImplementation 'junit:junit:' + junitVersion
++    testImplementation 'org.robolectric:robolectric:' + robolectricVersion
++    androidTestImplementation 'androidx.test.ext:junit:' + testXSupportVersion
++    androidTestImplementation 'androidx.test.ext:truth:' + testXSupportVersion
++    androidTestImplementation 'androidx.test:runner:' + testXSupportVersion
++    androidTestImplementation 'androidx.test:rules:' + testXSupportVersion
++    androidTestImplementation 'androidx.test.espresso:espresso-core:' + espressoVersion
++
++    implementation project(':fragment-1.1.0')
++    implementation project(':leanback-1.0.0')
++    implementation project(':common')
++    implementation project(':sharedutils')
++    implementation project(':mediaserviceinterfaces')
++    implementation project(':youtubeapi')
++    implementation project(':chatkit')
++    implementation project(':doubletapplayerview')
++
++    implementation 'io.reactivex.rxjava2:rxandroid:' + rxAndroidVersion
++    implementation 'io.reactivex.rxjava2:rxjava:' + rxJavaVersion
++
++    // Add the Firebase Crashlytics SDK.
++
++    stbetaImplementation('com.google.firebase:firebase-crashlytics:' + firebaseCrashlyticsVersion) {
++        transitive = true
++    }
++
++    ststableImplementation('com.google.firebase:firebase-crashlytics:' + firebaseCrashlyticsVersion) {
++        transitive = true
++    }
++
++    // debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.14'
++
++    implementation 'net.gotev:speech:' + gotevSpeechVersion
++
++    // ByeByeDPI fix
++    implementation 'org.conscrypt:conscrypt-android:' + conscryptVersion
++
++    implementation 'androidx.work:work-runtime:' + workVersion
++}
