@@ -68,6 +68,13 @@ else
   warn "Playback screen not detected (often an emulator limitation; check 02-playback.png)"
 fi
 
+# Up next from HackerTube (related videos) should load while a HackerTube video is open
+if adb logcat -d -s HackerTube:I 2>/dev/null | grep -q "related loaded"; then
+  pass "Up next from HackerTube loaded"
+else
+  warn "Up next from HackerTube not seen in the log"
+fi
+
 # 3. Back to browse, then down through a few rows (exercises paging and row loading)
 adb shell input keyevent KEYCODE_BACK
 sleep 3

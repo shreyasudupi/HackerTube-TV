@@ -11,7 +11,7 @@ index 35466e8..9df17b1 100644
  }
  
 diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java
-index 8627fae..7b0adfc 100644
+index 8627fae..274fabb 100644
 --- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java
 +++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/SuggestionsController.java
 @@ -26,6 +26,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.SeekBarSegme
@@ -22,17 +22,32 @@ index 8627fae..7b0adfc 100644
  import com.liskovsoft.smartyoutubetv2.common.misc.BrowseProcessorManager;
  import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
  import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
-@@ -44,6 +45,9 @@ public class SuggestionsController extends BasePlayerController {
+@@ -44,6 +45,10 @@ public class SuggestionsController extends BasePlayerController {
      private ContentService mContentService;
      private BrowseProcessorManager mBrowseProcessor;
      private Video mNextSectionVideo;
 +    // HackerTube: related videos for the current HackerTube video and the one autoplay should pick
 +    private VideoGroup mHtUpNext;
 +    private Video mHtNextVideo;
++    private Disposable mHtRelatedAction; // kept out of mActions: the player disposes those while a video loads
      private int mFocusCount;
      private int mNextRetryCount;
      private List<ChapterItem> mChapters;
-@@ -186,7 +190,7 @@ public class SuggestionsController extends BasePlayerController {
+@@ -92,11 +97,13 @@ public class SuggestionsController extends BasePlayerController {
+     @Override
+     public void onEngineReleased() {
+         disposeActions();
++        RxHelper.disposeActions(mHtRelatedAction);
+     }
+ 
+     @Override
+     public void onFinish() {
+         disposeActions();
++        RxHelper.disposeActions(mHtRelatedAction);
+     }
+ 
+     @Override
+@@ -186,7 +193,7 @@ public class SuggestionsController extends BasePlayerController {
  
          MediaGroup mediaGroup = group.getMediaGroup();
  
@@ -41,31 +56,45 @@ index 8627fae..7b0adfc 100644
                  .subscribe(
                          continueMediaGroup -> {
                              getPlayer().showProgressBar(false);
-@@ -238,9 +242,50 @@ public class SuggestionsController extends BasePlayerController {
+@@ -238,9 +245,64 @@ public class SuggestionsController extends BasePlayerController {
          }
  
          clearSuggestionsIfNeeded(video);
 +
-+        mHtUpNext = null;
-+        mHtNextVideo = null;
-+
-+        // HackerTube video: fetch hackertube.org's related videos first so they become the top row and drive autoplay
-+        if (video != null && HackerTubeService.isHackerTubeVideo(video.videoId)) {
-+            Disposable relatedAction = HackerTubeService.getRelatedObserve(video.videoId)
-+                    .subscribe(
-+                            group -> {
-+                                mHtUpNext = VideoGroup.from(group);
-+                                loadMetadata(video, metadata -> updateSuggestions(metadata, video));
-+                            },
-+                            error -> loadMetadata(video, metadata -> updateSuggestions(metadata, video))
-+                    );
-+            mActions.add(relatedAction);
-+            return;
-+        }
++        loadHackerTubeUpNext(video);
 +
          loadMetadata(video, metadata -> updateSuggestions(metadata, video));
      }
  
++    /**
++     * HackerTube video: fetch hackertube.org's related videos in parallel with YouTube's metadata.
++     * The row is pinned to the top of the suggestions whenever it arrives, and drives autoplay.
++     */
++    private void loadHackerTubeUpNext(Video video) {
++        RxHelper.disposeActions(mHtRelatedAction);
++        mHtUpNext = null;
++        mHtNextVideo = null;
++
++        if (video == null || !HackerTubeService.isHackerTubeVideo(video.videoId)) {
++            return;
++        }
++
++        final String videoId = video.videoId;
++        mHtRelatedAction = HackerTubeService.getRelatedObserve(videoId)
++                .subscribe(
++                        group -> {
++                            Video current = getVideo();
++                            if (current == null || !Helpers.equals(current.videoId, videoId)) {
++                                return; // user moved on
++                            }
++                            mHtUpNext = VideoGroup.from(group);
++                            mHtUpNext.setPosition(0); // top of the suggestions
++                            appendHackerTubeUpNextIfNeeded(current);
++                        },
++                        error -> android.util.Log.w("HackerTube", "related failed: " + videoId + ": " + error.getMessage())
++                );
++    }
++
 +    private void appendHackerTubeUpNextIfNeeded(Video video) {
 +        if (getPlayer() == null || mHtUpNext == null || mHtUpNext.isEmpty()) {
 +            return;
@@ -92,7 +121,7 @@ index 8627fae..7b0adfc 100644
      private void loadMetadata(Video video, OnMetadata callback) {
          disposeActions();
  
-@@ -289,6 +334,8 @@ public class SuggestionsController extends BasePlayerController {
+@@ -289,6 +351,8 @@ public class SuggestionsController extends BasePlayerController {
              result = Video.from(getVideo().nextMediaItem);
          } else if (mNextSectionVideo != null && !getVideo().isShuffled) {
              result = mNextSectionVideo;
@@ -101,7 +130,7 @@ index 8627fae..7b0adfc 100644
          } else if (getVideo().nextMediaItem != null) {
              result = Video.from(getVideo().nextMediaItem);
          }
-@@ -378,6 +425,8 @@ public class SuggestionsController extends BasePlayerController {
+@@ -378,6 +442,8 @@ public class SuggestionsController extends BasePlayerController {
  
          appendSectionPlaylistIfNeeded(video);
  
