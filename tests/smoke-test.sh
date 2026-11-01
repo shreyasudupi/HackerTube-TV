@@ -40,6 +40,7 @@ else
   exit 1
 fi
 
+adb logcat -G 16M >/dev/null 2>&1 || true   # the video player floods the default buffer
 adb logcat -c
 adb shell am start -n "$ACTIVITY" > /dev/null
 
@@ -91,7 +92,7 @@ else
   fail "App process is gone (killed or crashed)"
 fi
 
-adb logcat -d -s HackerTube:* -v raw > "$OUT/hackertube-log.txt" 2>&1
+adb logcat -d -v raw -s 'HackerTube:*' > "$OUT/hackertube-log.txt" 2>&1
 adb logcat -d -b crash -v threadtime > "$OUT/crash.txt" 2>&1
 adb logcat -d -v threadtime > "$OUT/logcat.txt" 2>&1
 adb shell am force-stop "$PKG" || true
