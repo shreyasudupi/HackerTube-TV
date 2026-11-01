@@ -22,7 +22,7 @@ It installs as its own app (`org.hackertube.tv`), next to SmartTube if you have 
 1. **Developer options:** *Settings → My Fire TV → About*, click the device name 7 times.
 2. **Install Downloader** (by AFTVnews) from the Fire TV Appstore.
 3. **Allow it:** *Settings → My Fire TV → Developer options → Install unknown apps* → turn on **Downloader**.
-4. In Downloader, open:
+4. In Downloader, enter the code **`2710893`** (or the full URL below):
 
    ```
    https://github.com/shreyasudupi/HackerTube-TV/releases/download/latest/HackerTube.apk
