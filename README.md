@@ -19,6 +19,8 @@ It installs as its own app (`org.hackertube.tv`), next to SmartTube if you have 
 
 Taken on a Fire TV Stick 4K Max.
 
+<p align="center"><img src="docs/screenshots/sidebar.jpg" alt="HackerTube home with the sidebar open: HackerTube, HN Topics and HN Playlists above SmartTube's usual sections, Picked for you and Recently recommended on HN rows on the right" width="840"></p>
+
 | HN Topics | Further down HN Topics |
 |---|---|
 | <img src="docs/screenshots/hn-topics.jpg" alt="HN Topics: New on HN row, then Satire & parody, each tile showing HN recommender count" width="420"> | <img src="docs/screenshots/hn-topics-scrolled.jpg" alt="HN Topics further down: Film analysis & criticism and Sports & athletics rows" width="420"> |
