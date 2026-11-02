@@ -101,7 +101,7 @@ public class HackerTubeService {
                     {"Over 1 hour", "/api/list?dur=xlong&n=" + PAGE_SIZE},
                     {"Under 4 minutes", "/api/list?dur=short&n=" + PAGE_SIZE},
             };
-            emitRows(emitter, rows);
+            emitRows(emitter, rows, true);
         });
     }
 
@@ -215,6 +215,10 @@ public class HackerTubeService {
     // ---------- internals ----------
 
     private static void emitRows(io.reactivex.ObservableEmitter<List<MediaGroup>> emitter, String[][] rows) {
+        emitRows(emitter, rows, false);
+    }
+
+    private static void emitRows(io.reactivex.ObservableEmitter<List<MediaGroup>> emitter, String[][] rows, boolean warmUp) {
         int emitted = 0;
         for (String[] row : rows) {
             if (emitter.isDisposed()) {
@@ -224,6 +228,9 @@ public class HackerTubeService {
                 HtMediaGroup group = loadPage(row[0], row[1], 0);
                 if (!group.isEmpty()) {
                     emitter.onNext(Collections.singletonList(group));
+                    if (warmUp && emitted == 0) {
+                        HtPrefetch.warmUp(group.getMediaItems().get(0).getVideoId());
+                    }
                     emitted++;
                     android.util.Log.i(LOG_TAG, "row loaded: " + row[0] + " (" + group.getMediaItems().size() + " videos)");
                 }

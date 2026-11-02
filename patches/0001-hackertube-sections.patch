@@ -239,18 +239,19 @@ index e0f1298..62d086e 100644
          } else {
              Log.d(TAG, "Empty format info received. Seems future live translation. No video data to pass to the player.");
 diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
-index 8d81a5a..d2e933e 100644
+index 8d81a5a..0a45d67 100644
 --- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
 +++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
-@@ -36,6 +36,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.menu.provide
+@@ -36,6 +36,8 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.menu.provide
  import com.liskovsoft.smartyoutubetv2.common.app.presenters.interfaces.SectionPresenter;
  import com.liskovsoft.smartyoutubetv2.common.app.presenters.interfaces.VideoGroupPresenter;
  import com.liskovsoft.smartyoutubetv2.common.app.views.BrowseView;
 +import com.liskovsoft.smartyoutubetv2.common.hackertube.HackerTubeService;
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HtPrefetch;
  import com.liskovsoft.smartyoutubetv2.common.misc.AppDataSourceManager;
  import com.liskovsoft.smartyoutubetv2.common.misc.BrowseProcessorManager;
  import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
-@@ -186,6 +187,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -186,6 +188,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
          String country = LocaleUtility.getCurrentLocale(getContext()).getCountry();
          int uploadsType = getMainUIData().isUploadsOldLookEnabled() ? BrowseSection.TYPE_GRID : BrowseSection.TYPE_MULTI_GRID;
  
@@ -262,7 +263,7 @@ index 8d81a5a..d2e933e 100644
          mSectionsMapping.put(MediaGroup.TYPE_HOME, new BrowseSection(MediaGroup.TYPE_HOME, getContext().getString(R.string.header_home), BrowseSection.TYPE_ROW, R.drawable.icon_home, false));
          mSectionsMapping.put(MediaGroup.TYPE_SHORTS, new BrowseSection(MediaGroup.TYPE_SHORTS, getContext().getString(R.string.header_shorts), BrowseSection.TYPE_SHORTS_GRID, R.drawable.icon_shorts));
          mSectionsMapping.put(MediaGroup.TYPE_TRENDING, new BrowseSection(MediaGroup.TYPE_TRENDING, getContext().getString(R.string.header_trending), BrowseSection.TYPE_ROW, R.drawable.icon_trending));
-@@ -213,6 +219,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -213,6 +220,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
      }
  
      private void initRowAndGridMapping() {
@@ -272,7 +273,7 @@ index 8d81a5a..d2e933e 100644
          mRowMapping.put(MediaGroup.TYPE_HOME, getContentService().getHomeObserve());
          mRowMapping.put(MediaGroup.TYPE_TRENDING, getContentService().getTrendingObserve());
          mRowMapping.put(MediaGroup.TYPE_KIDS_HOME, getContentService().getKidsHomeObserve());
-@@ -307,7 +316,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -307,7 +317,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
  
          // Empty Home on first run fix. Switch to something non-empty.
          if (!getSignInService().isSigned() && VideoStateService.instance(getContext()).isEmpty()) {
@@ -281,7 +282,16 @@ index 8d81a5a..d2e933e 100644
          }
  
          int index = 0;
-@@ -851,7 +860,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -418,6 +428,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+             return;
+         }
+ 
++        HtPrefetch.onFocus(item); // HackerTube: fetch stream info early so play starts faster
++
+         if (belongsToChannelUploadsMultiGrid(item)) {
+             if (getMainUIData().isUploadsAutoLoadEnabled()) {
+                 updateChannelUploadsMultiGrid(item);
+@@ -851,7 +863,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
          //    continuation = getContentService().continueGroupObserve(mediaGroup);
          //}
  
