@@ -7,7 +7,7 @@
 | Sidebar section | What's in it |
 |---|---|
 | **HackerTube** (opens on launch) | *Picked for you*, *Recently recommended on HN*, *Hidden gems*, *Evergreen classics*, *Talks*, *Lectures*, *Documentaries*, *Over 1 hour*, *Under 4 minutes* |
-| **HN Topics** | One row per HackerTube topic area, best first |
+| **HN Topics** | "New on HN" first, then one row per HackerTube category (~150), most HN-recommended first |
 | **HN Playlists** | The playlists curated on hackertube.org, in their intended order |
 | **Search** | HackerTube matches appear as the first row, then normal YouTube results |
 
