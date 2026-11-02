@@ -26,6 +26,10 @@ import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.Random;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import io.reactivex.Observable;
 
@@ -37,6 +41,10 @@ public class HackerTubeService {
     private static final String TAG = HackerTubeService.class.getSimpleName();
     public static final String BASE_URL = "https://hackertube.org";
     private static final int PAGE_SIZE = 36;
+    /** HN Topics has ~150 rows, so each starts small (a TV row shows ~5 tiles) and pages in more on scroll. */
+    private static final int TOPIC_PAGE_SIZE = 12;
+    /** Parallel requests when loading many rows, so 150 topic rows don't load one by one. */
+    private static final int ROW_LOAD_THREADS = 4;
     private static final int TIMEOUT_MS = 15_000;
 
     // Sidebar section ids. Kept below SidebarService.RESERVED_ID (100) and clear of MediaGroup.TYPE_* (0..22).
@@ -53,7 +61,7 @@ public class HackerTubeService {
     private static final String LOG_TAG = "HackerTube";
     /** Small in-memory response cache so browsing back and forth doesn't re-hit hackertube.org. */
     private static final long CACHE_TTL_MS = 10 * 60 * 1000;
-    private static final int CACHE_MAX_ENTRIES = 80;
+    private static final int CACHE_MAX_ENTRIES = 250;
     private static final Map<String, Object[]> sCache = new LinkedHashMap<String, Object[]>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Object[]> eldest) {
@@ -105,16 +113,30 @@ public class HackerTubeService {
         });
     }
 
-    /** One row per topic area (16 areas), best first. */
+    /**
+     * HN Topics: "New on HN" first, then one row per fine-grained category (about 150), grouped by
+     * topic area. Each row is sorted by HN recommendation strength (the site's "Most recommended").
+     */
     public static Observable<List<MediaGroup>> getCategoriesObserve() {
         return RxHelper.create(emitter -> {
             JSONArray areas = new JSONArray(get("/api/browse"));
-            String[][] rows = new String[areas.length()][];
+            List<String[]> rows = new ArrayList<>();
+            rows.add(new String[] {"New on HN", "/api/list?sort=recent&n=" + PAGE_SIZE});
             for (int i = 0; i < areas.length(); i++) {
-                JSONObject area = areas.getJSONObject(i);
-                rows[i] = new String[] {area.optString("name"), "/api/list?area=" + enc(area.optString("id")) + "&n=" + PAGE_SIZE};
+                JSONArray cats = areas.getJSONObject(i).optJSONArray("categories");
+                if (cats == null) {
+                    continue;
+                }
+                List<String[]> other = new ArrayList<>(); // the vague "(other)" bucket goes last in its area
+                for (int j = 0; j < cats.length(); j++) {
+                    JSONObject cat = cats.getJSONObject(j);
+                    String id = cat.optString("id");
+                    String[] row = {cat.optString("name"), "/api/list?cat=" + enc(id) + "&sort=hn&n=" + TOPIC_PAGE_SIZE};
+                    (id.endsWith("-other") ? other : rows).add(row);
+                }
+                rows.addAll(other);
             }
-            emitRows(emitter, rows);
+            emitRowsParallel(emitter, rows);
         });
     }
 
@@ -242,6 +264,42 @@ public class HackerTubeService {
         finish(emitter, emitted);
     }
 
+    /** Like emitRows, but fetches a few rows at a time and still emits them in order. */
+    private static void emitRowsParallel(io.reactivex.ObservableEmitter<List<MediaGroup>> emitter, List<String[]> rows) {
+        ExecutorService pool = Executors.newFixedThreadPool(ROW_LOAD_THREADS);
+        try {
+            List<Future<HtMediaGroup>> futures = new ArrayList<>();
+            for (String[] row : rows) {
+                futures.add(pool.submit(() -> emitter.isDisposed() ? null : loadPage(row[0], row[1], 0)));
+            }
+            int emitted = 0;
+            for (int i = 0; i < rows.size(); i++) {
+                if (emitter.isDisposed()) {
+                    return;
+                }
+                String title = rows.get(i)[0];
+                try {
+                    HtMediaGroup group = futures.get(i).get();
+                    if (group != null && !group.isEmpty()) {
+                        emitter.onNext(Collections.singletonList(group));
+                        emitted++;
+                        android.util.Log.i(LOG_TAG, "row loaded: " + title + " (" + group.getMediaItems().size() + " videos)");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception e) {
+                    Throwable cause = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
+                    Log.e(TAG, "Row '%s' failed: %s", title, cause.getMessage());
+                    android.util.Log.w(LOG_TAG, "row failed: " + title + ": " + cause.getMessage());
+                }
+            }
+            finish(emitter, emitted);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
     private static void finish(io.reactivex.ObservableEmitter<List<MediaGroup>> emitter, int emitted) {
         if (emitted == 0) {
             emitter.tryOnError(new IllegalStateException("Couldn't reach hackertube.org. Check the connection and try again."));
@@ -253,8 +311,26 @@ public class HackerTubeService {
     private static HtMediaGroup loadPage(String title, String path, int offset) throws Exception {
         JSONArray array = new JSONArray(get(path + "&offset=" + offset));
         List<MediaItem> items = parseItems(array);
-        boolean more = array.length() >= PAGE_SIZE;
+        boolean more = array.length() >= pageSizeOf(path);
         return new HtMediaGroup(title, items, more ? path : null, offset + array.length());
+    }
+
+    /** The n= of a list path, so paging knows a short page means the end. */
+    private static int pageSizeOf(String path) {
+        int i = path.indexOf("&n=");
+        if (i < 0) {
+            i = path.indexOf("?n=");
+        }
+        if (i >= 0) {
+            int start = i + 3, end = start;
+            while (end < path.length() && Character.isDigit(path.charAt(end))) {
+                end++;
+            }
+            if (end > start) {
+                return Integer.parseInt(path.substring(start, end));
+            }
+        }
+        return PAGE_SIZE;
     }
 
     private static List<MediaItem> parseItems(JSONArray array) {
