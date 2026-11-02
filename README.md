@@ -127,6 +127,8 @@ HackerTube TV adds no analytics, tracking or accounts. On top of what SmartTube 
 
 ## Credits & license
 
+**Thank you to [Andrej Karpathy](https://github.com/karpathy)**, whose weekend project [hackertube.org](https://hackertube.org) and his post announcing it inspired this app. HackerTube TV only exists because he built and shared HackerTube, including its open data and API.
+
 - [SmartTube](https://github.com/yuliskov/SmartTube) by Yuriy Liskov and contributors (MIT): the player, UI and YouTube integration.
-- [HackerTube](https://hackertube.org): the curation, data and API.
+- [HackerTube](https://hackertube.org) by Andrej Karpathy: the curation, data and API.
 - MIT licensed (see `LICENSE`). Not affiliated with SmartTube, HackerTube, Hacker News, Y Combinator or Google/YouTube.
