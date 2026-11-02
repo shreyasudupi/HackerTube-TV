@@ -43,8 +43,13 @@ public class HackerTubeService {
     private static final int PAGE_SIZE = 36;
     /** HN Topics has ~150 rows, so each starts small (a TV row shows ~5 tiles) and pages in more on scroll. */
     private static final int TOPIC_PAGE_SIZE = 12;
-    /** Parallel requests when loading many rows, so 150 topic rows don't load one by one. */
-    private static final int ROW_LOAD_THREADS = 4;
+    /**
+     * Parallel requests when loading many rows, so 150 topic rows don't load one by one.
+     * Kept low: hackertube.org rate-limits (HTTP 429) bursts, and 4 threads tripped it on a Fire TV.
+     */
+    private static final int ROW_LOAD_THREADS = 2;
+    /** Retries after HTTP 429 (Too Many Requests), waiting Retry-After or a growing delay. */
+    private static final int MAX_RETRIES_429 = 4;
     private static final int TIMEOUT_MS = 15_000;
 
     // Sidebar section ids. Kept below SidebarService.RESERVED_ID (100) and clear of MediaGroup.TYPE_* (0..22).
@@ -402,6 +407,30 @@ public class HackerTubeService {
     }
 
     private static String fetch(String path) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return fetchOnce(path);
+            } catch (RateLimitedException e) {
+                if (attempt >= MAX_RETRIES_429) {
+                    throw e;
+                }
+                long waitMs = e.retryAfterMs > 0 ? Math.min(e.retryAfterMs, 10_000) : 1000L * (attempt + 1);
+                android.util.Log.i(LOG_TAG, "http: 429, retrying in " + waitMs + "ms " + path);
+                Thread.sleep(waitMs);
+            }
+        }
+    }
+
+    private static class RateLimitedException extends IllegalStateException {
+        final long retryAfterMs;
+
+        RateLimitedException(String message, long retryAfterMs) {
+            super(message);
+            this.retryAfterMs = retryAfterMs;
+        }
+    }
+
+    private static String fetchOnce(String path) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(BASE_URL + path).openConnection();
         conn.setConnectTimeout(TIMEOUT_MS);
         conn.setReadTimeout(TIMEOUT_MS);
@@ -409,6 +438,15 @@ public class HackerTubeService {
         conn.setRequestProperty("User-Agent", "HackerTubeTV (SmartTube fork; Android TV)");
         try {
             int code = conn.getResponseCode();
+            if (code == 429) {
+                long retryAfterMs = 0;
+                try {
+                    retryAfterMs = Long.parseLong(conn.getHeaderField("Retry-After").trim()) * 1000;
+                } catch (Exception ignored) {
+                    // missing or an HTTP date: fall back to the growing delay
+                }
+                throw new RateLimitedException("hackertube.org answered 429 for " + path, retryAfterMs);
+            }
             if (code != 200) {
                 throw new IllegalStateException("hackertube.org answered " + code + " for " + path);
             }
