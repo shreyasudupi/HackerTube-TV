@@ -1,4 +1,7 @@
 name: Build, test & publish beta
+# The run's title says what is being built: the commit message on a push, or the "what" input
+# (else the branch) on a manual run.
+run-name: ${{ inputs.what || github.event.head_commit.message || format('Beta build from {0}', github.ref_name) }}
 
 # Every push to main (and every upstream sync) builds stable + beta APKs, runs the emulator
 # smoke test, and publishes to the BETA channel only. Stable users are untouched until someone
@@ -8,6 +11,11 @@ on:
     branches: [ main ]
     paths-ignore: [ '**.md', 'docs/**' ]
   workflow_dispatch:
+    inputs:
+      what:
+        description: "What's being tested (shown as the run title)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -32,6 +40,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0   # full history, for the list of changes since stable
+
+      - name: What's in this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STABLE=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)
+          mkdir -p dist
+          {
+            echo "### What's in this build"
+            echo ""
+            echo "Branch \`${{ github.ref_name }}\` at \`$(git rev-parse --short HEAD)\`."
+            if [ -n "$STABLE" ] && git rev-parse -q --verify "refs/tags/$STABLE" >/dev/null; then
+              echo "Changes since the current stable release ($STABLE):"
+              echo ""
+              git log --no-merges --format='- %s' "$STABLE..HEAD" | head -30
+            else
+              echo "Latest change:"
+              echo ""
+              git log -1 --format='- %s'
+            fi
+            echo ""
+            echo "### What gets tested"
+            echo ""
+            echo "- **Build:** stable and beta APKs compile and are signed with the HackerTube key."
+            echo "- **Emulator test (Android TV):** the app installs, HackerTube rows load from hackertube.org, a video opens, Up next loads, rows page in while scrolling, and the app doesn't crash."
+            echo "- **VirusTotal:** every APK is scanned before the beta is published."
+            echo "- **Beta:** published only if all of the above pass. Stable is untouched until Promote beta to stable."
+          } > dist/changes.md
+          cat dist/changes.md >> "$GITHUB_STEP_SUMMARY"
+          git log --no-merges --format='%s' "${STABLE:-HEAD~1}..HEAD" 2>/dev/null | head -10 | while read -r l; do echo "::notice title=In this build::$l"; done || true
 
       - name: Check signing secrets
         env:
@@ -285,7 +325,10 @@ jobs:
       - name: Publish versioned pre-release
         run: |
           VT=""; [ -f dist/virustotal.md ] && VT="$(cat dist/virustotal.md)"
+          CHANGES=""; [ -f dist/changes.md ] && CHANGES="$(cat dist/changes.md)"
           NOTES="Beta build $NAME (SmartTube $(cut -c1-7 UPSTREAM_COMMIT)). Passed the emulator smoke test.
+
+          $CHANGES
 
           Not yet promoted to stable. Testers: install **HackerTube Beta** from $REPO_URL/releases/download/beta/HackerTube-Beta.apk
 
