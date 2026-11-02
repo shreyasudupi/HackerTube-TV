@@ -15,6 +15,14 @@ While a HackerTube video plays, the first suggestions row is **Up next from Hack
 
 It installs as its own app (`org.hackertube.tv`), next to SmartTube if you have it.
 
+## Screenshots
+
+Taken on a Fire TV Stick 4K Max.
+
+| HN Topics | Further down HN Topics |
+|---|---|
+| <img src="docs/screenshots/hn-topics.jpg" alt="HN Topics: New on HN row, then Satire & parody, each tile showing HN recommender count" width="420"> | <img src="docs/screenshots/hn-topics-scrolled.jpg" alt="HN Topics further down: Film analysis & criticism and Sports & athletics rows" width="420"> |
+
 ---
 
 ## Install on Fire TV
