@@ -181,6 +181,63 @@ index 8627fae..7282b69 100644
          List<MediaGroup> suggestions = mediaItemMetadata.getSuggestions();
  
          if (suggestions == null) {
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/VideoLoaderController.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/VideoLoaderController.java
+index e0f1298..62d086e 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/VideoLoaderController.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/VideoLoaderController.java
+@@ -1,5 +1,7 @@
+ package com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers;
+ 
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HtTiming;
++
+ import android.os.Build.VERSION;
+ 
+ import com.liskovsoft.mediaserviceinterfaces.MediaItemService;
+@@ -257,9 +259,11 @@ public class VideoLoaderController extends BasePlayerController {
+ 
+         ServiceManager service = YouTubeServiceManager.instance();
+         MediaItemService mediaItemManager = service.getMediaItemService();
++        HtTiming.mark("requesting stream info from YouTube");
+         mFormatInfoAction = mediaItemManager.getFormatInfoObserve(video.videoId)
+                 .subscribe(this::processFormatInfo,
+                            error -> {
++                               HtTiming.mark("stream info FAILED: " + error.getMessage());
+                                getPlayer().showProgressBar(false);
+                                mErrorFixerController.runFormatErrorAction(error);
+                            });
+@@ -274,6 +278,8 @@ public class VideoLoaderController extends BasePlayerController {
+ 
+         String bgImageUrl = null;
+ 
++        HtTiming.mark("stream info received from YouTube" + (formatInfo.isUnplayable() ? " (unplayable: " + formatInfo.getPlayabilityReason() + ")" : ""));
++
+         getVideo().sync(formatInfo);
+ 
+         // Fix stretched video for a couple milliseconds (before the onVideoSizeChanged gets called)
+@@ -299,6 +305,7 @@ public class VideoLoaderController extends BasePlayerController {
+             loadNextVideo(5_000);
+         } else if (acceptAdaptiveFormats(formatInfo) && formatInfo.containsDashFormats() && !preferSabrLive(formatInfo)) {
+             Log.d(TAG, "Loading regular video in dash format...");
++            HtTiming.mark("opening DASH stream");
+ 
+             if (getPlayerTweaksData().isHighBitrateFormatsEnabled() && formatInfo.hasExtendedHlsFormats()) {
+                 player.openMerged(formatInfo, formatInfo.getHlsManifestUrl());
+@@ -307,6 +314,7 @@ public class VideoLoaderController extends BasePlayerController {
+             }
+         } else if (acceptAdaptiveFormats(formatInfo) && formatInfo.containsSabrFormats()) {
+             Log.d(TAG, "Loading video in sabr format...");
++            HtTiming.mark("opening SABR stream");
+             player.openSabr(formatInfo);
+         } else if (acceptDashLive(formatInfo)) {
+             Log.d(TAG, "Loading live video (current or past live stream) in dash format...");
+@@ -316,6 +324,7 @@ public class VideoLoaderController extends BasePlayerController {
+             player.openHlsUrl(formatInfo.getHlsManifestUrl());
+         } else if (formatInfo.containsUrlFormats()) {
+             Log.d(TAG, "Loading url list video. This is always LQ...");
++            HtTiming.mark("opening URL-list stream (low quality)");
+             player.openUrlList(formatInfo.createUrlList());
+         } else {
+             Log.d(TAG, "Empty format info received. Seems future live translation. No video data to pass to the player.");
 diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
 index 8d81a5a..d2e933e 100644
 --- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
@@ -233,6 +290,26 @@ index 8d81a5a..d2e933e 100644
  
          Disposable continueAction = continuation
                  .subscribe(
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/PlaybackPresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/PlaybackPresenter.java
+index 3514d8f..332ecb9 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/PlaybackPresenter.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/PlaybackPresenter.java
+@@ -1,5 +1,7 @@
+ package com.liskovsoft.smartyoutubetv2.common.app.presenters;
+ 
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HtTimingController;
++
+ import android.annotation.SuppressLint;
+ import android.app.Activity;
+ import android.content.Context;
+@@ -55,6 +57,7 @@ public class PlaybackPresenter extends BasePresenter<PlaybackView> implements Pl
+         super(context);
+ 
+         // NOTE: position matters!!!
++        mEventListeners.add(new HtTimingController()); // HackerTube: logs video start-up timing first
+         mEventListeners.add(new VideoStateController());
+         mEventListeners.add(new SuggestionsController());
+         mEventListeners.add(new VideoLoaderController());
 diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/SearchPresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/SearchPresenter.java
 index 7346123..f94a148 100644
 --- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/SearchPresenter.java

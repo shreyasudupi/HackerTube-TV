@@ -309,7 +309,9 @@ public class HackerTubeService {
                 return (String) hit[1];
             }
         }
+        long t0 = System.currentTimeMillis();
         String body = fetch(path);
+        android.util.Log.i(LOG_TAG, "http: " + (System.currentTimeMillis() - t0) + "ms " + body.length() + "B " + (path.length() > 80 ? path.substring(0, 80) + "..." : path));
         synchronized (sCache) {
             sCache.put(path, new Object[] {now, body});
         }
