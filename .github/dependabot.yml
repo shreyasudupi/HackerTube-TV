@@ -1,0 +1,10 @@
+# Keeps the pinned GitHub Actions in the workflows up to date (one PR a week at most, grouped).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: [ "*" ]

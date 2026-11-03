@@ -18,20 +18,22 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
+  # Compiles upstream SmartTube + the HackerTube overlay. This job runs third-party build code
+  # (SmartTube's Gradle scripts and plugins), so it gets no secrets and a read-only token, and it
+  # produces UNSIGNED APKs. Signing happens in the separate "sign" job below, which never runs
+  # upstream code, so a compromised upstream commit can't read the signing key.
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
-      id-token: write      # build provenance
-      attestations: write  # build provenance
     outputs:
       name: ${{ steps.ver.outputs.name }}
       code: ${{ steps.ver.outputs.code }}
@@ -42,7 +44,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0   # full history, for the list of changes since stable
-
+          persist-credentials: false   # keep the token out of .git/config, where build code could read it
       - name: What's in this build
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,19 +77,6 @@ jobs:
           cat dist/changes.md >> "$GITHUB_STEP_SUMMARY"
           git log --no-merges --format='%s' "${STABLE:-HEAD~1}..HEAD" 2>/dev/null | head -10 | while read -r l; do echo "::notice title=In this build::$l"; done || true
 
-      - name: Check signing secrets
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          ALIAS: ${{ secrets.ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          missing=""
-          for s in SIGNING_KEY KEY_STORE_PASSWORD ALIAS KEY_PASSWORD; do [ -n "${!s}" ] || missing="$missing $s"; done
-          if [ -n "$missing" ]; then
-            echo "::error title=Signing secrets missing::Add these repository secrets (Settings > Secrets and variables > Actions):$missing"
-            exit 1
-          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
@@ -98,33 +87,28 @@ jobs:
       - name: Prepare source (upstream SmartTube + HackerTube overlay)
         run: scripts/prepare.sh "$GITHUB_WORKSPACE/build/SmartTube"
 
+      - name: Check the Gradle wrapper is the genuine one
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
       - name: Set version
         id: ver
         working-directory: build/SmartTube
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           BASE=$(grep -m1 'versionName' smarttubetv/build.gradle | awk -F'"' '{print $2}')
-          CODE=$((3000000 + ${{ github.run_number }}))
-          NAME="${BASE}-ht.${{ github.run_number }}"
+          CODE=$((3000000 + RUN_NUMBER))
+          NAME="${BASE}-ht.${RUN_NUMBER}"
           sed -i "0,/versionCode [0-9]*/s//versionCode ${CODE}/" smarttubetv/build.gradle
           sed -i "0,/versionName \"[^\"]*\"/s//versionName \"${NAME}\"/" smarttubetv/build.gradle
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "Building HackerTube TV $NAME ($CODE)"
 
-      - name: Configure signing
+      - name: Build stable + beta (unsigned)
         working-directory: build/SmartTube
         run: |
-          echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > "$RUNNER_TEMP/key.jks"
-          {
-            echo "storeFile=$RUNNER_TEMP/key.jks"
-            echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}"
-            echo "keyAlias=${{ secrets.ALIAS }}"
-            echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
-          } > keystore.properties
-
-      - name: Build stable + beta
-        working-directory: build/SmartTube
-        run: |
+          rm -f keystore.properties   # no keystore.properties -> Gradle leaves release APKs unsigned
           chmod +x gradlew
           set +e
           ./gradlew --no-daemon --stacktrace assembleSthackertubeRelease assembleSthackertubebetaRelease 2>&1 | tee "$RUNNER_TEMP/gradle.log"
@@ -133,28 +117,107 @@ jobs:
             ERR=$( (grep -n -E "^e: |error:|What went wrong|FAILED|Could not|> " "$RUNNER_TEMP/gradle.log" | head -40; echo '-----'; tail -60 "$RUNNER_TEMP/gradle.log") | cut -c1-300 | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=Gradle build failed::${ERR}"
           fi
-          rm -f keystore.properties "$RUNNER_TEMP/key.jks"
           exit $rc
 
-      - name: Collect APKs and update manifests
-        env:
-          NAME: ${{ steps.ver.outputs.name }}
-          CODE: ${{ steps.ver.outputs.code }}
+      - name: Collect unsigned APKs
         run: |
           set -e
           OUTS=build/SmartTube/smarttubetv/build/outputs/apk
-          mkdir -p dist/stable dist/beta
-          S=$OUTS/sthackertube/release
-          cp "$S"/*_armeabi-v7a.apk dist/stable/HackerTube.apk
-          cp "$S"/*_arm64-v8a.apk   dist/stable/HackerTube_arm64-v8a.apk
-          cp "$S"/*_universal.apk   dist/stable/HackerTube_universal.apk
-          cp "$S"/*_x86.apk         dist/stable/HackerTube_x86-emulator.apk
-          cp "$S"/*_x86_64.apk      dist/stable/HackerTube_x86_64.apk
-          B=$OUTS/sthackertubebeta/release
-          cp "$B"/*_armeabi-v7a.apk dist/beta/HackerTube-Beta.apk
-          cp "$B"/*_arm64-v8a.apk   dist/beta/HackerTube-Beta_arm64-v8a.apk
-          cp "$B"/*_universal.apk   dist/beta/HackerTube-Beta_universal.apk
+          mkdir -p unsigned/stable unsigned/beta
+          cp "$OUTS"/sthackertube/release/*.apk unsigned/stable/
+          cp "$OUTS"/sthackertubebeta/release/*.apk unsigned/beta/
+          cp dist/changes.md unsigned/
+          ls -la unsigned/*
 
+      - name: Upload unsigned build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned
+          path: unsigned/
+          retention-days: 3
+
+  # Signs the APKs with the HackerTube key. Only this job sees the signing secrets, and it runs
+  # nothing from upstream SmartTube: just zipalign/apksigner from the runner's Android SDK.
+  # The secrets can live in the "release" environment (Settings > Environments) so no other job
+  # or workflow can reach them.
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write      # build provenance
+      attestations: write  # build provenance
+    env:
+      REPO_URL: https://github.com/${{ github.repository }}
+      NAME: ${{ needs.build.outputs.name }}
+      CODE: ${{ needs.build.outputs.code }}
+      EXPECTED_CERT_SHA256: 41efc68f22d052bbcaa5a8075c27725b3b4d3a1302bb8a83d05442fceaf799b9
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Download unsigned build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unsigned
+          path: unsigned
+
+      - name: Check signing secrets
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          missing=""
+          for s in SIGNING_KEY KEY_STORE_PASSWORD ALIAS KEY_PASSWORD; do [ -n "${!s}" ] || missing="$missing $s"; done
+          if [ -n "$missing" ]; then
+            echo "::error title=Signing secrets missing::Add these secrets (Settings > Environments > release, or repository secrets):$missing"
+            exit 1
+          fi
+
+      - name: Sign APKs
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KS_PASS: ${{ secrets.KEY_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "Using $(basename "$BT") build tools"
+          KS="$RUNNER_TEMP/key.jks"
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$KS"
+          trap 'rm -f "$KS"' EXIT
+          mkdir -p dist/stable dist/beta
+          sign() { # source-dir abi-pattern output
+            local src
+            src=$(ls "$1"/*"$2"*.apk)
+            [ "$(echo "$src" | wc -l)" = 1 ] || { echo "::error::Expected one APK matching $2 in $1, got: $src"; exit 1; }
+            "$BT/zipalign" -f -p 4 "$src" "$RUNNER_TEMP/aligned.apk"
+            "$BT/apksigner" sign --ks "$KS" --ks-pass env:KS_PASS --ks-key-alias "$ALIAS" --key-pass env:KEY_PASS \
+              --out "$3" "$RUNNER_TEMP/aligned.apk"
+            "$BT/apksigner" verify "$3"
+            rm -f "$RUNNER_TEMP/aligned.apk" "$3.idsig"
+            echo "signed $3"
+          }
+          sign unsigned/stable _armeabi-v7a dist/stable/HackerTube.apk
+          sign unsigned/stable _arm64-v8a   dist/stable/HackerTube_arm64-v8a.apk
+          sign unsigned/stable _universal   dist/stable/HackerTube_universal.apk
+          sign unsigned/stable _x86_64      dist/stable/HackerTube_x86_64.apk
+          sign unsigned/stable _x86.        dist/stable/HackerTube_x86-emulator.apk
+          sign unsigned/beta   _armeabi-v7a dist/beta/HackerTube-Beta.apk
+          sign unsigned/beta   _arm64-v8a   dist/beta/HackerTube-Beta_arm64-v8a.apk
+          sign unsigned/beta   _universal   dist/beta/HackerTube-Beta_universal.apk
+          cp unsigned/changes.md dist/
+
+      - name: Update manifests and checksums
+        run: |
+          set -e
           manifest() { # channel-tag prefix file
             local DL="$REPO_URL/releases/download/$1" P="$2"
             cat <<JSON
@@ -182,15 +245,21 @@ jobs:
           (cd dist/beta && sha256sum *.apk > SHA256SUMS-beta.txt)
 
           # Privacy check: the signing certificate must not carry anything beyond the project name
-          SUBJ=$(keytool -printcert -jarfile dist/stable/HackerTube.apk | grep -m1 "Owner:")
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          SUBJ=$("$BT/apksigner" verify --print-certs dist/stable/HackerTube.apk | grep -m1 "certificate DN:" | sed 's/.*certificate DN: //')
           echo "Signing certificate: $SUBJ"
-          if [ "$SUBJ" != "Owner: CN=HackerTube TV" ]; then
+          if [ "$SUBJ" != "CN=HackerTube TV" ]; then
             echo "::error title=Unexpected signing certificate::$SUBJ"; exit 1
+          fi
+          # And it must be the published HackerTube key (README > Security), so a swapped secret can't ship
+          FP=$("$BT/apksigner" verify --print-certs dist/stable/HackerTube.apk | grep -m1 "certificate SHA-256 digest:" | awk '{print $NF}')
+          if [ "$FP" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error title=Unexpected signing key::certificate SHA-256 $FP, expected $EXPECTED_CERT_SHA256"; exit 1
           fi
           ls -la dist/*
 
       - name: Build provenance (signed record that this workflow built these APKs)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |
             dist/stable/*.apk
@@ -204,7 +273,7 @@ jobs:
           retention-days: 30
 
   smoke-test:
-    needs: build
+    needs: sign
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -212,7 +281,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Download build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist
@@ -224,7 +293,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Run smoke test on Android TV emulator
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 30
           target: android-tv
@@ -255,8 +324,10 @@ jobs:
           retention-days: 30
 
   publish-beta:
-    needs: [ build, smoke-test ]
+    needs: [ build, sign, smoke-test ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the releases
     env:
       HAS_VT_KEY: ${{ secrets.VIRUS_TOTAL_API_KEY != '' }}
       GH_TOKEN: ${{ github.token }}
@@ -267,7 +338,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Download build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist

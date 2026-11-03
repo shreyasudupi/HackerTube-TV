@@ -99,7 +99,7 @@ HACKERTUBE_REPO=owner/repo scripts/prepare.sh   # creates build/SmartTube
 cd build/SmartTube && ./gradlew assembleSthackertubeRelease
 ```
 
-Release signing uses repository secrets (`SIGNING_KEY`, `KEY_STORE_PASSWORD`, `ALIAS`, `KEY_PASSWORD`). No keys are stored in the repo.
+Release signing uses secrets (`SIGNING_KEY`, `KEY_STORE_PASSWORD`, `ALIAS`, `KEY_PASSWORD`) in the `release` environment. No keys are stored in the repo.
 
 ## Security
 
@@ -114,6 +114,11 @@ Release signing uses repository secrets (`SIGNING_KEY`, `KEY_STORE_PASSWORD`, `A
   Check an APK with `keytool -printcert -jarfile HackerTube.apk` (or `apksigner verify --print-certs`). Updates only install over an app signed with this same key.
 - **Malware scan:** every release is scanned on [VirusTotal](https://www.virustotal.com); the report links are in each release's notes. Apps like SmartTube sometimes get one or two generic "riskware/PUA" flags because they update themselves and block ads; the full reports are linked so you can judge for yourself.
 - **Checksums:** `SHA256SUMS.txt` is attached to every release.
+- **Upstream changes are reviewed, not pulled blindly.** The weekly sync only proposes a SmartTube commit after it has been on SmartTube's master for about a week and is still there, and it arrives as a pull request that's reviewed before anything is built from it. HackerTube never uses SmartTube's release binaries or signing keys.
+- **The signing key never meets third-party build code.** SmartTube is compiled into unsigned APKs in one job with no secrets; a separate job, which runs only Android's own `zipalign`/`apksigner`, signs them and checks the certificate fingerprint above.
+- **Releases need a human.** Every build goes to the Beta channel first; stable only changes when the maintainer approves "Promote beta to stable".
+
+Found a security problem? See [SECURITY.md](SECURITY.md).
 
 **Permissions.** HackerTube TV requests exactly the same permissions as upstream SmartTube; this fork adds none.
 

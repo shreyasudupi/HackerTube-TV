@@ -21,6 +21,9 @@ concurrency:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    # Settings > Environments > stable: add yourself as a required reviewer, and GitHub will
+    # ask for your approval before anything reaches stable users.
+    environment: stable
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -28,9 +31,17 @@ jobs:
     steps:
       - name: Pick the build
         id: pick
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            TAG="v${{ inputs.version }}"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Promote only from main (this run is on $GITHUB_REF)"; exit 1
+          fi
+          if [ -n "$VERSION" ]; then
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?-ht\.[0-9]+$ ]]; then
+              echo "::error::'$VERSION' doesn't look like a version such as 32.68-ht.12"; exit 1
+            fi
+            TAG="v$VERSION"
           else
             TAG=$(gh release list --limit 100 --json tagName,isPrerelease,createdAt \
               --jq '[.[] | select(.isPrerelease and (.tagName | startswith("v")))] | sort_by(.createdAt) | reverse | .[0].tagName')
