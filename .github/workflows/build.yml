@@ -102,6 +102,10 @@ jobs:
         with:
           gradle-version: ${{ steps.gradle.outputs.version }}
           cache-disabled: true   # nothing from an upstream build carries over to the next one
+          validate-wrappers: false   # the wrapper isn't used; it's deleted below
+
+      - name: Remove SmartTube's wrapper jars
+        run: find build/SmartTube -path '*/gradle/wrapper/gradle-wrapper.jar' -print -delete
 
       - name: Set version
         id: ver
