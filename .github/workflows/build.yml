@@ -210,10 +210,10 @@ jobs:
           printf '%s' "$SIGNING_KEY" | base64 --decode > "$KS"
           trap 'rm -f "$KS"' EXIT
           mkdir -p dist/stable dist/beta
-          sign() { # source-dir abi-pattern output
+          sign() { # source-dir abi-regex output
             local src
-            src=$(ls "$1"/*"$2"*.apk)
-            [ "$(echo "$src" | wc -l)" = 1 ] || { echo "::error::Expected one APK matching $2 in $1, got: $src"; exit 1; }
+            src=$(ls "$1"/*.apk | grep -E "$2" || true)
+            [ -n "$src" ] && [ "$(echo "$src" | wc -l)" = 1 ] || { echo "::error::Expected one APK matching $2 in $1, got: $src"; exit 1; }
             "$BT/zipalign" -f -p 4 "$src" "$RUNNER_TEMP/aligned.apk"
             "$BT/apksigner" sign --ks "$KS" --ks-pass env:KS_PASS --ks-key-alias "$ALIAS" --key-pass env:KEY_PASS \
               --out "$3" "$RUNNER_TEMP/aligned.apk"
@@ -221,14 +221,14 @@ jobs:
             rm -f "$RUNNER_TEMP/aligned.apk" "$3.idsig"
             echo "signed $3"
           }
-          sign unsigned/stable _armeabi-v7a dist/stable/HackerTube.apk
-          sign unsigned/stable _arm64-v8a   dist/stable/HackerTube_arm64-v8a.apk
-          sign unsigned/stable _universal   dist/stable/HackerTube_universal.apk
-          sign unsigned/stable _x86_64      dist/stable/HackerTube_x86_64.apk
-          sign unsigned/stable _x86.        dist/stable/HackerTube_x86-emulator.apk
-          sign unsigned/beta   _armeabi-v7a dist/beta/HackerTube-Beta.apk
-          sign unsigned/beta   _arm64-v8a   dist/beta/HackerTube-Beta_arm64-v8a.apk
-          sign unsigned/beta   _universal   dist/beta/HackerTube-Beta_universal.apk
+          sign unsigned/stable '_armeabi-v7a[.-]' dist/stable/HackerTube.apk
+          sign unsigned/stable '_arm64-v8a[.-]'   dist/stable/HackerTube_arm64-v8a.apk
+          sign unsigned/stable '_universal[.-]'   dist/stable/HackerTube_universal.apk
+          sign unsigned/stable '_x86_64[.-]'      dist/stable/HackerTube_x86_64.apk
+          sign unsigned/stable '_x86[.-]'         dist/stable/HackerTube_x86-emulator.apk
+          sign unsigned/beta   '_armeabi-v7a[.-]' dist/beta/HackerTube-Beta.apk
+          sign unsigned/beta   '_arm64-v8a[.-]'   dist/beta/HackerTube-Beta_arm64-v8a.apk
+          sign unsigned/beta   '_universal[.-]'   dist/beta/HackerTube-Beta_universal.apk
           cp unsigned/changes.md dist/
 
       - name: Update manifests and checksums
