@@ -1,16 +1,34 @@
 name: Sync with upstream SmartTube
 
-# SmartTube ships frequent fixes when YouTube changes things. This checks weekly for a new
-# upstream commit, verifies the HackerTube patch still applies, bumps UPSTREAM_COMMIT and
-# kicks off a new build. If the patch no longer applies the run fails and nothing changes.
+# SmartTube ships frequent fixes when YouTube changes things. Once a week this proposes moving to a
+# newer upstream commit, as a pull request for review. Nothing reaches main (or a Beta) until the
+# PR is merged.
+#
+# Cooldown: an upstream commit is only proposed after this job has seen it on SmartTube's master
+# for about a week, and only if it is still there (upstream didn't pull it). Bad upstream commits
+# are usually spotted and removed within days. The "first seen" record lives on the
+# upstream-watch branch, so it can't be faked by back-dating a commit.
 on:
   schedule:
     - cron: '17 7 * * 1'
   workflow_dispatch:
+    inputs:
+      skip_cooldown:
+        description: 'Propose the newest upstream commit now (for an urgent YouTube fix)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
-  actions: write
+  contents: write        # push the upstream-sync and upstream-watch branches
+  pull-requests: write   # open the review PR
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/yuliskov/SmartTube
+  COOLDOWN_DAYS: 6   # the job runs weekly and GitHub's schedule drifts by hours, so "6" means "last week's commit"
 
 jobs:
   sync:
@@ -18,27 +36,126 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - name: Check upstream
+      - name: Pick the upstream commit
         id: up
-        run: |
-          LATEST=$(git ls-remote https://github.com/yuliskov/SmartTube.git refs/heads/master | cut -f1)
-          CURRENT=$(tr -d '[:space:]' < UPSTREAM_COMMIT)
-          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-          if [ "$LATEST" = "$CURRENT" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; echo "Up to date ($CURRENT)"; else echo "changed=true" >> "$GITHUB_OUTPUT"; echo "$CURRENT -> $LATEST"; fi
-
-      - name: Verify patch applies to new upstream
-        if: steps.up.outputs.changed == 'true'
-        run: |
-          echo "${{ steps.up.outputs.latest }}" > UPSTREAM_COMMIT
-          scripts/prepare.sh "$RUNNER_TEMP/SmartTube"
-
-      - name: Commit and build
-        if: steps.up.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          SKIP_COOLDOWN: ${{ inputs.skip_cooldown || false }}
         run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM.git"
+          git fetch -q --filter=blob:none --no-tags upstream +master:refs/upstream/master
+          LATEST=$(git rev-parse refs/upstream/master)
+          CURRENT=$(tr -d '[:space:]' < UPSTREAM_COMMIT)
+          NOW=$(date +%s)
+
+          CAND=""; SEEN=""
+          if git fetch -q origin upstream-watch 2>/dev/null; then
+            read -r CAND SEEN < <(git show FETCH_HEAD:candidate 2>/dev/null || echo "")
+          fi
+          echo "current: $CURRENT  latest: $LATEST  candidate: ${CAND:-none} (first seen ${SEEN:+$(date -u -d @"$SEEN" +%F)})"
+
+          TAKE=""
+          if [ "$SKIP_COOLDOWN" = "true" ]; then
+            [ "$LATEST" != "$CURRENT" ] && TAKE="$LATEST" && SEEN="$NOW"
+            echo "::warning title=Cooldown skipped::Proposing the newest upstream commit without the one-week wait."
+          elif [ -n "$CAND" ] && [ "$CAND" != "$CURRENT" ]; then
+            if ! git merge-base --is-ancestor "$CAND" "$LATEST" 2>/dev/null; then
+              echo "::warning title=Upstream rewrote history::$CAND is no longer on SmartTube master (it may have been pulled). Not proposing it; watching the new head instead."
+            elif [ $(( (NOW - SEEN) / 86400 )) -ge "$COOLDOWN_DAYS" ]; then
+              TAKE="$CAND"
+            else
+              echo "Candidate is only $(( (NOW - SEEN) / 86400 )) days old; waiting."
+            fi
+          fi
+
+          # Start watching the newest upstream commit (keeping its first-seen time if we already were)
+          if [ "$LATEST" = "$CAND" ] && [ -z "$TAKE" ]; then NEWCAND="$CAND $SEEN"; else NEWCAND="$LATEST $NOW"; fi
+          [ "$LATEST" = "$CURRENT" ] && NEWCAND=""
+          [ "$LATEST" = "$TAKE" ] && NEWCAND=""
+
+          echo "take=$TAKE" >> "$GITHUB_OUTPUT"
+          echo "seen=$SEEN" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "newcand=$NEWCAND" >> "$GITHUB_OUTPUT"
+          echo "oldcand=${CAND:+$CAND $SEEN}" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAKE" ]; then echo "Proposing $CURRENT -> $TAKE"; else echo "Nothing to propose this week."; fi
+
+      - name: Remember what we've seen
+        if: steps.up.outputs.newcand != steps.up.outputs.oldcand
+        env:
+          NEWCAND: ${{ steps.up.outputs.newcand }}
+        run: |
+          set -e
           git config user.name "Night Shift"
           git config user.email "night-shift@hackertube-tv.invalid"
-          git commit -am "Sync SmartTube to ${{ steps.up.outputs.latest }}"
-          git push
-          gh workflow run build.yml --ref main
+          W="$RUNNER_TEMP/watch"
+          git worktree add -q --detach "$W"
+          cd "$W"
+          git checkout -q --orphan "watch-$GITHUB_RUN_ID"
+          git rm -rq --cached . && find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          printf '%s\n' "$NEWCAND" > candidate
+          printf '%s\n' "Bookkeeping for the weekly upstream sync: the SmartTube commit being watched and when it was first seen (unix time). Don't merge this branch." > README.md
+          git add candidate README.md
+          git commit -qm "Watching upstream ${NEWCAND%% *}"
+          git push -qf origin HEAD:upstream-watch
+
+      - name: Verify patch applies to the new upstream
+        if: steps.up.outputs.take != ''
+        env:
+          TAKE: ${{ steps.up.outputs.take }}
+        run: |
+          echo "$TAKE" > UPSTREAM_COMMIT
+          scripts/prepare.sh "$RUNNER_TEMP/SmartTube"
+
+      - name: Open the review PR
+        if: steps.up.outputs.take != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAKE: ${{ steps.up.outputs.take }}
+          CURRENT: ${{ steps.up.outputs.current }}
+          SEEN: ${{ steps.up.outputs.seen }}
+        run: |
+          set -euo pipefail
+          git config user.name "Night Shift"
+          git config user.email "night-shift@hackertube-tv.invalid"
+
+          # Upstream changes that deserve a human look: build scripts, Gradle, manifests, CI,
+          # submodule bumps (MediaServiceCore etc.), and anything about updates or signing.
+          RISKY=$(git diff --name-only "$CURRENT" "$TAKE" -- \
+              '*.gradle' '*.gradle.kts' 'gradle/**' 'gradle.properties' '*AndroidManifest.xml' \
+              '.github/**' '*proguard*' '*.jar' '*.so' 2>/dev/null; \
+            git diff --name-only "$CURRENT" "$TAKE" 2>/dev/null | grep -i -E 'updat|sign|keystore|cert' || true)
+          SUBMODS=$(git diff --raw --no-abbrev "$CURRENT" "$TAKE" 2>/dev/null | awk '$2=="160000"{print "- `"$6"`: "$3" -> "$4}' | sed 's/\.\.\.//g' || true)
+          NCOMMITS=$(git rev-list --count "$CURRENT..$TAKE" 2>/dev/null || echo "?")
+          NFILES=$(git diff --name-only "$CURRENT" "$TAKE" 2>/dev/null | wc -l || echo "?")
+
+          BODY=$(cat <<EOF
+          Moves HackerTube to SmartTube \`${TAKE:0:7}\` ($NCOMMITS upstream commits, $NFILES files).
+
+          - Upstream changes: $UPSTREAM/compare/$CURRENT...$TAKE
+          - First seen on SmartTube master: $(date -u -d @"$SEEN" '+%F %H:%M UTC'), and still there today.
+          - The HackerTube overlay and patch apply cleanly.
+
+          ### Worth a look
+          $( [ -n "$RISKY" ] && echo "$RISKY" | sort -u | sed 's/^/- `/; s/$/`/' || echo "No build scripts, manifests, CI or update/signing code changed." )
+
+          ### Submodules moved
+          ${SUBMODS:-None.}
+
+          Merging starts a Beta build. Stable is untouched until "Promote beta to stable".
+          EOF
+          )
+
+          git checkout -q -B upstream-sync
+          echo "$TAKE" > UPSTREAM_COMMIT
+          git commit -qam "Sync SmartTube to $TAKE"
+          git push -qf origin upstream-sync
+
+          if PR=$(gh pr list --head upstream-sync --state open --json number --jq '.[0].number // empty') && [ -n "$PR" ]; then
+            gh pr edit "$PR" --title "Sync SmartTube to ${TAKE:0:7}" --body "$BODY"
+          else
+            gh pr create --base main --head upstream-sync --title "Sync SmartTube to ${TAKE:0:7}" --body "$BODY" || {
+              echo "::warning title=Couldn't open the PR::Turn on Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests', or open it by hand: ${{ github.server_url }}/${{ github.repository }}/compare/main...upstream-sync"
+            }
+          fi
+          printf '%s\n' "$BODY" >> "$GITHUB_STEP_SUMMARY"
