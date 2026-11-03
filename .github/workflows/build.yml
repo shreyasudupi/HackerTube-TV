@@ -87,8 +87,21 @@ jobs:
       - name: Prepare source (upstream SmartTube + HackerTube overlay)
         run: scripts/prepare.sh "$GITHUB_WORKSPACE/build/SmartTube"
 
-      - name: Check the Gradle wrapper is the genuine one
-        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      # SmartTube's gradle-wrapper.jar doesn't match any official Gradle release, so it isn't run.
+      # Instead, the official Gradle distribution of the same version is downloaded (checksum-verified).
+      - name: Read the Gradle version SmartTube uses
+        id: gradle
+        run: |
+          V=$(sed -n 's#.*gradle-\([0-9.]*\)-\(bin\|all\)\.zip.*#\1#p' build/SmartTube/gradle/wrapper/gradle-wrapper.properties)
+          [[ "$V" =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "::error::Couldn't read the Gradle version"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Gradle $V"
+
+      - name: Set up official Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: ${{ steps.gradle.outputs.version }}
+          cache-disabled: true   # nothing from an upstream build carries over to the next one
 
       - name: Set version
         id: ver
@@ -109,9 +122,8 @@ jobs:
         working-directory: build/SmartTube
         run: |
           rm -f keystore.properties   # no keystore.properties -> Gradle leaves release APKs unsigned
-          chmod +x gradlew
           set +e
-          ./gradlew --no-daemon --stacktrace assembleSthackertubeRelease assembleSthackertubebetaRelease 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+          gradle --no-daemon --stacktrace assembleSthackertubeRelease assembleSthackertubebetaRelease 2>&1 | tee "$RUNNER_TEMP/gradle.log"
           rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then
             ERR=$( (grep -n -E "^e: |error:|What went wrong|FAILED|Could not|> " "$RUNNER_TEMP/gradle.log" | head -40; echo '-----'; tail -60 "$RUNNER_TEMP/gradle.log") | cut -c1-300 | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')
