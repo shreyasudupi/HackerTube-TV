@@ -11,7 +11,7 @@
 | **HN Playlists** | The playlists curated on hackertube.org, in their intended order |
 | **Search** | HackerTube matches appear as the first row, then normal YouTube results |
 
-While a HackerTube video plays, the first suggestions row is **Up next from HackerTube** (related videos from hackertube.org), and autoplay picks the first one you haven't watched. *Picked for you* skips videos you've already watched. **Video description** (long-press a video, or the info button in the player) starts with *why Hacker News recommends it*, hackertube.org's summary and how many HN commenters recommended it. Everything else is SmartTube as usual.
+While a HackerTube video plays, the first suggestions row is **Up next from HackerTube** (related videos from hackertube.org). Autoplay continues through the row you started the video from. If there's no next video in that row, it picks the first Up next video you haven't watched. *Picked for you* skips videos you've already watched. **Video description** (long-press a video, or the info button in the player) starts with *why Hacker News recommends it*, hackertube.org's summary and how many HN commenters recommended it. Everything else is SmartTube as usual.
 
 It installs as its own app (`org.hackertube.tv`), next to SmartTube if you have it.
 
