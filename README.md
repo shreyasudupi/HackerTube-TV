@@ -9,7 +9,7 @@
 | **HackerTube** (opens on launch) | *Picked for you*, *Recently recommended on HN*, *Hidden gems*, *Evergreen classics*, *Talks*, *Lectures*, *Documentaries*, *Over 1 hour*, *Under 4 minutes* |
 | **HN Topics** | "New on HN" first, then one row per HackerTube category (~150), most HN-recommended first |
 | **HN Playlists** | The playlists curated on hackertube.org, in their intended order |
-| **Tristan's Tier List** | [Tristan Hume's YouTube tier list](https://thume.ca/2026/11/01/youtube-tier-list-2026/): one row per tier (S to D), each tile a channel he recommends, shown with the video he picked; OK opens the channel |
+| **Tristan's Tier List** | [Tristan Hume's YouTube tier list](https://thume.ca/2026/11/01/youtube-tier-list-2026/): one row per tier (S to D), each tile the video he picked for a channel he recommends; OK plays it (long-press to open the channel) |
 | **Search** | HackerTube matches appear as the first row, then normal YouTube results |
 
 While a HackerTube video plays, the first suggestions row is **Up next from HackerTube** (related videos from hackertube.org), and autoplay picks the first one you haven't watched. *Picked for you* skips videos you've already watched. **Video description** (long-press a video, or the info button in the player) starts with *why Hacker News recommends it*, hackertube.org's summary and how many HN commenters recommended it. Everything else is SmartTube as usual.
