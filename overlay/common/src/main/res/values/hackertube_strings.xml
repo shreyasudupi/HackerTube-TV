@@ -3,4 +3,5 @@
     <string translatable="false" name="ht_header_home">HackerTube</string>
     <string translatable="false" name="ht_header_categories">HN Topics</string>
     <string translatable="false" name="ht_header_playlists">HN Playlists</string>
+    <string translatable="false" name="ht_header_tier_list">Tristan\'s Tier List</string>
 </resources>
