@@ -239,19 +239,20 @@ index e0f1298..62d086e 100644
          } else {
              Log.d(TAG, "Empty format info received. Seems future live translation. No video data to pass to the player.");
 diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
-index 8d81a5a..0a45d67 100644
+index 8d81a5a..3d0294b 100644
 --- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
 +++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/BrowsePresenter.java
-@@ -36,6 +36,8 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.menu.provide
+@@ -36,6 +36,9 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.menu.provide
  import com.liskovsoft.smartyoutubetv2.common.app.presenters.interfaces.SectionPresenter;
  import com.liskovsoft.smartyoutubetv2.common.app.presenters.interfaces.VideoGroupPresenter;
  import com.liskovsoft.smartyoutubetv2.common.app.views.BrowseView;
 +import com.liskovsoft.smartyoutubetv2.common.hackertube.HackerTubeService;
 +import com.liskovsoft.smartyoutubetv2.common.hackertube.HtPrefetch;
++import com.liskovsoft.smartyoutubetv2.common.hackertube.HtTierList;
  import com.liskovsoft.smartyoutubetv2.common.misc.AppDataSourceManager;
  import com.liskovsoft.smartyoutubetv2.common.misc.BrowseProcessorManager;
  import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
-@@ -186,6 +188,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -186,6 +189,12 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
          String country = LocaleUtility.getCurrentLocale(getContext()).getCountry();
          int uploadsType = getMainUIData().isUploadsOldLookEnabled() ? BrowseSection.TYPE_GRID : BrowseSection.TYPE_MULTI_GRID;
  
@@ -259,21 +260,23 @@ index 8d81a5a..0a45d67 100644
 +        mSectionsMapping.put(HackerTubeService.SECTION_HOME, new BrowseSection(HackerTubeService.SECTION_HOME, getContext().getString(R.string.ht_header_home), BrowseSection.TYPE_ROW, R.drawable.icon_trending, false));
 +        mSectionsMapping.put(HackerTubeService.SECTION_CATEGORIES, new BrowseSection(HackerTubeService.SECTION_CATEGORIES, getContext().getString(R.string.ht_header_categories), BrowseSection.TYPE_ROW, R.drawable.icon_news, false));
 +        mSectionsMapping.put(HackerTubeService.SECTION_PLAYLISTS, new BrowseSection(HackerTubeService.SECTION_PLAYLISTS, getContext().getString(R.string.ht_header_playlists), BrowseSection.TYPE_ROW, R.drawable.icon_playlist, false));
++        mSectionsMapping.put(HackerTubeService.SECTION_TIER_LIST, new BrowseSection(HackerTubeService.SECTION_TIER_LIST, getContext().getString(R.string.ht_header_tier_list), BrowseSection.TYPE_ROW, R.drawable.icon_sports, false));
 +
          mSectionsMapping.put(MediaGroup.TYPE_HOME, new BrowseSection(MediaGroup.TYPE_HOME, getContext().getString(R.string.header_home), BrowseSection.TYPE_ROW, R.drawable.icon_home, false));
          mSectionsMapping.put(MediaGroup.TYPE_SHORTS, new BrowseSection(MediaGroup.TYPE_SHORTS, getContext().getString(R.string.header_shorts), BrowseSection.TYPE_SHORTS_GRID, R.drawable.icon_shorts));
          mSectionsMapping.put(MediaGroup.TYPE_TRENDING, new BrowseSection(MediaGroup.TYPE_TRENDING, getContext().getString(R.string.header_trending), BrowseSection.TYPE_ROW, R.drawable.icon_trending));
-@@ -213,6 +220,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -213,6 +222,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
      }
  
      private void initRowAndGridMapping() {
 +        mRowMapping.put(HackerTubeService.SECTION_HOME, HackerTubeService.getHomeObserve(getContext()));
 +        mRowMapping.put(HackerTubeService.SECTION_CATEGORIES, HackerTubeService.getCategoriesObserve());
 +        mRowMapping.put(HackerTubeService.SECTION_PLAYLISTS, HackerTubeService.getPlaylistsObserve());
++        mRowMapping.put(HackerTubeService.SECTION_TIER_LIST, HtTierList.getTierListObserve(getContext()));
          mRowMapping.put(MediaGroup.TYPE_HOME, getContentService().getHomeObserve());
          mRowMapping.put(MediaGroup.TYPE_TRENDING, getContentService().getTrendingObserve());
          mRowMapping.put(MediaGroup.TYPE_KIDS_HOME, getContentService().getKidsHomeObserve());
-@@ -307,7 +317,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -307,7 +320,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
  
          // Empty Home on first run fix. Switch to something non-empty.
          if (!getSignInService().isSigned() && VideoStateService.instance(getContext()).isEmpty()) {
@@ -282,7 +285,7 @@ index 8d81a5a..0a45d67 100644
          }
  
          int index = 0;
-@@ -418,6 +428,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -418,6 +431,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
              return;
          }
  
@@ -291,7 +294,7 @@ index 8d81a5a..0a45d67 100644
          if (belongsToChannelUploadsMultiGrid(item)) {
              if (getMainUIData().isUploadsAutoLoadEnabled()) {
                  updateChannelUploadsMultiGrid(item);
-@@ -851,7 +863,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
+@@ -851,7 +866,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
          //    continuation = getContentService().continueGroupObserve(mediaGroup);
          //}
  
@@ -382,7 +385,7 @@ index a594b18..d7316bd 100644
                                              showLongTextDialog(newDescription);
                                          } else {
 diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java
-index b726436..c2b8a86 100644
+index b726436..73ba227 100644
 --- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java
 +++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/service/SidebarService.java
 @@ -6,6 +6,7 @@ import android.content.Context;
@@ -393,17 +396,18 @@ index b726436..c2b8a86 100644
  import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
  import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
  import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs.ProfileChangeListener;
-@@ -236,6 +237,9 @@ public class SidebarService implements ProfileChangeListener {
+@@ -236,6 +237,10 @@ public class SidebarService implements ProfileChangeListener {
      }
  
      private void initSections() {
 +        mDefaultSections.put(R.string.ht_header_home, HackerTubeService.SECTION_HOME);
 +        mDefaultSections.put(R.string.ht_header_categories, HackerTubeService.SECTION_CATEGORIES);
 +        mDefaultSections.put(R.string.ht_header_playlists, HackerTubeService.SECTION_PLAYLISTS);
++        mDefaultSections.put(R.string.ht_header_tier_list, HackerTubeService.SECTION_TIER_LIST);
          mDefaultSections.put(R.string.header_notifications, MediaGroup.TYPE_NOTIFICATIONS);
          mDefaultSections.put(R.string.header_home, MediaGroup.TYPE_HOME);
          mDefaultSections.put(R.string.header_shorts, MediaGroup.TYPE_SHORTS);
-@@ -293,7 +297,7 @@ public class SidebarService implements ProfileChangeListener {
+@@ -293,7 +298,7 @@ public class SidebarService implements ProfileChangeListener {
          String[] split = Helpers.splitData(data);
  
          mPinnedItems = Helpers.parseList(split, 0, Video::fromString);
@@ -412,6 +416,36 @@ index b726436..c2b8a86 100644
          mIsSettingsSectionEnabled = Helpers.parseBoolean(split, 2, true);
  
          transferOldPinnedItems();
+@@ -306,6 +311,29 @@ public class SidebarService implements ProfileChangeListener {
+         enableSection(MediaGroup.TYPE_SETTINGS, true);
+ 
+         cleanupPinnedItems();
++
++        addTierListOnce();
++    }
++
++    /**
++     * HackerTube: people updating from a version without Tristan's Tier List already have a saved
++     * sidebar, so add the new section once (after HN Playlists). If they hide it later it stays hidden.
++     */
++    private void addTierListOnce() {
++        android.content.SharedPreferences prefs = mContext.getSharedPreferences("hackertube", Context.MODE_PRIVATE);
++        if (prefs.getBoolean("tier_list_added", false)) {
++            return;
++        }
++        int index = findPinnedItemIndex(HackerTubeService.SECTION_PLAYLISTS);
++        if (index != -1 && findPinnedItemIndex(HackerTubeService.SECTION_TIER_LIST) == -1) {
++            Video item = new Video();
++            item.sectionId = HackerTubeService.SECTION_TIER_LIST;
++            mPinnedItems.add(index + 1, item);
++            persistState();
++        } else {
++            enableSection(HackerTubeService.SECTION_TIER_LIST, true);
++        }
++        prefs.edit().putBoolean("tier_list_added", true).apply();
+     }
+ 
+     private void transferOldPinnedItems() {
 diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/prefs/MainUIData.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/prefs/MainUIData.java
 index 8ad0b52..f0bc4df 100644
 --- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/prefs/MainUIData.java
@@ -439,7 +473,7 @@ index dcd39bf..a1a219f 100644
  }
  
 diff --git a/smarttubetv/build.gradle b/smarttubetv/build.gradle
-index 3664bfd..2f15ccd 100644
+index 091bb9b..c295efb 100644
 --- a/smarttubetv/build.gradle
 +++ b/smarttubetv/build.gradle
 @@ -83,7 +83,7 @@ android {

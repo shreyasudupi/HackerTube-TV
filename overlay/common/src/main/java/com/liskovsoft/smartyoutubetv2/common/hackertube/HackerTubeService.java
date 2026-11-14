@@ -56,6 +56,8 @@ public class HackerTubeService {
     public static final int SECTION_HOME = 90;
     public static final int SECTION_CATEGORIES = 91;
     public static final int SECTION_PLAYLISTS = 92;
+    /** Tristan's Tier List (bundled, see HtTierList). */
+    public static final int SECTION_TIER_LIST = 93;
 
     private static final int sSeed = new Random().nextInt(100_000_000);
     /** How many recently watched videos to send as "seen" so the feed doesn't repeat them. */

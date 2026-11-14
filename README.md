@@ -9,6 +9,7 @@
 | **HackerTube** (opens on launch) | *Picked for you*, *Recently recommended on HN*, *Hidden gems*, *Evergreen classics*, *Talks*, *Lectures*, *Documentaries*, *Over 1 hour*, *Under 4 minutes* |
 | **HN Topics** | "New on HN" first, then one row per HackerTube category (~150), most HN-recommended first |
 | **HN Playlists** | The playlists curated on hackertube.org, in their intended order |
+| **Tristan's Tier List** | [Tristan Hume's YouTube tier list](https://thume.ca/2026/11/01/youtube-tier-list-2026/): one row per tier (S to D), each tile the video he picked for a channel he recommends; OK plays it (long-press to open the channel) |
 | **Search** | HackerTube matches appear as the first row, then normal YouTube results |
 
 While a HackerTube video plays, the first suggestions row is **Up next from HackerTube** (related videos from hackertube.org). Autoplay continues through the row you started the video from. If there's no next video in that row, it picks the first Up next video you haven't watched. *Picked for you* skips videos you've already watched. **Video description** (long-press a video, or the info button in the player) starts with *why Hacker News recommends it*, hackertube.org's summary and how many HN commenters recommended it. Everything else is SmartTube as usual.
@@ -85,7 +86,8 @@ This repo doesn't vendor SmartTube's source. It pins an upstream commit and laye
 ```
 UPSTREAM_COMMIT                         SmartTube commit the app is built from
 overlay/                                new files copied into the SmartTube tree
-  common/.../hackertube/                  HackerTubeService (API client), HtMediaGroup, HtMediaItem
+  common/.../hackertube/                  HackerTubeService (API client), HtMediaGroup, HtMediaItem, HtTierList
+  common/src/main/res/raw/ht_tier_list.json  Tristan's Tier List data (scripts/update-tier-list.py)
   */src/sthackertube*/                    stable and beta flavors: name, icons, update channel
 patches/0001-hackertube-sections.patch  small edits to upstream files (sidebar, browse, search, player)
 scripts/prepare.sh                      upstream @ commit + submodules, overlay, patch
@@ -146,4 +148,5 @@ HackerTube TV adds no analytics, tracking or accounts. On top of what SmartTube 
 
 - [SmartTube](https://github.com/yuliskov/SmartTube) by Yuriy Liskov and contributors (MIT): the player, UI and YouTube integration.
 - [HackerTube](https://hackertube.org) by Andrej Karpathy: the curation, data and API.
-- MIT licensed (see `LICENSE`). Not affiliated with SmartTube, HackerTube, Hacker News, Y Combinator or Google/YouTube.
+- [My YouTube tier list, six years later](https://thume.ca/2026/11/01/youtube-tier-list-2026/) by [Tristan Hume](https://thume.ca): the channel rankings and picks in *Tristan's Tier List*. Only channel names, tiers and his picked videos are bundled; read his post for why each channel is there.
+- MIT licensed (see `LICENSE`). Not affiliated with SmartTube, HackerTube, Tristan Hume, Hacker News, Y Combinator or Google/YouTube.
